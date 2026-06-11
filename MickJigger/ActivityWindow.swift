@@ -4,7 +4,16 @@ import AppKit
 /// "Activity" button. Tabs: Today / Week / Month / All Time.
 /// Metrics per ACTIVITY_TRACKING.md, including the Real vs Synthetic
 /// breakdown and the weighted Activity Score.
+///
+/// Layout is card-based: each metric lives in a rounded card, the timeline is
+/// a padded bar chart, Real vs Synthetic is a horizontal-bar comparison, and
+/// insights render as icon callout rows. All colors are semantic so the
+/// window adapts to light and dark mode.
 final class ActivityWindowController: NSWindowController {
+
+    private static let contentWidth: CGFloat = 520
+    private static let cornerRadius: CGFloat = 10
+    private static let cardPadding: CGFloat = 16
 
     private let service: ActivityService
 
@@ -12,6 +21,7 @@ final class ActivityWindowController: NSWindowController {
     private let tabs = NSSegmentedControl(
         labels: ["Today", "Week", "Month", "All Time"],
         trackingMode: .selectOne, target: nil, action: nil)
+    private let shareButton = NSButton()
     private let contentStack = NSStackView()
     private var refreshTimer: Timer?
 
@@ -54,13 +64,26 @@ final class ActivityWindowController: NSWindowController {
         buildPermissionBanner()
         root.addArrangedSubview(permissionBanner)
 
+        // Header row: tabs on the left, Share in the top-right corner.
         tabs.target = self
         tabs.action = #selector(tabChanged)
-        root.addArrangedSubview(tabs)
+        shareButton.image = NSImage(
+            systemSymbolName: "square.and.arrow.up", accessibilityDescription: "Share")
+        shareButton.bezelStyle = .texturedRounded
+        shareButton.target = self
+        shareButton.action = #selector(shareClicked(_:))
+        shareButton.toolTip = "Share today's activity stats"
+        let headerSpacer = NSView()
+        headerSpacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        let headerRow = NSStackView(views: [tabs, headerSpacer, shareButton])
+        headerRow.orientation = .horizontal
+        headerRow.alignment = .centerY
+        headerRow.spacing = 8
+        root.addArrangedSubview(headerRow)
 
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
-        contentStack.spacing = 14
+        contentStack.spacing = 12
 
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
@@ -85,9 +108,9 @@ final class ActivityWindowController: NSWindowController {
             container.widthAnchor.constraint(equalToConstant: 560),
             container.heightAnchor.constraint(equalToConstant: 660),
 
-            scroll.widthAnchor.constraint(equalToConstant: 520),
-            permissionBanner.widthAnchor.constraint(equalToConstant: 520),
-            tabs.widthAnchor.constraint(equalToConstant: 520),
+            scroll.widthAnchor.constraint(equalToConstant: Self.contentWidth),
+            permissionBanner.widthAnchor.constraint(equalToConstant: Self.contentWidth),
+            headerRow.widthAnchor.constraint(equalToConstant: Self.contentWidth),
 
             docView.widthAnchor.constraint(equalTo: scroll.widthAnchor),
             contentStack.topAnchor.constraint(equalTo: docView.topAnchor),
@@ -147,6 +170,17 @@ final class ActivityWindowController: NSWindowController {
         InputMonitoringPermission.openSystemSettings()
     }
 
+    @objc private func shareClicked(_ sender: NSButton) {
+        let stats = service.todaySnapshot()
+        let text = "Today I moved my cursor "
+            + "\(ActivityService.formatDistance(px: stats.distancePx)), made "
+            + "\(ActivityService.formatCount(stats.clicks)) clicks and scrolled "
+            + "\(ActivityService.formatCount(stats.scrolls)) times. "
+            + "Tracked by Mick Jigger."
+        let picker = NSSharingServicePicker(items: [text])
+        picker.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+    }
+
     func refresh() {
         // Tracking may have become possible since last look (grant landed).
         if !service.isTracking && InputMonitoringPermission.isGranted {
@@ -174,24 +208,22 @@ final class ActivityWindowController: NSWindowController {
         addSection("Today")
         let avgSpeed = stats.activeSeconds > 0
             ? stats.distancePx / stats.activeSeconds : 0
-        addMetricsGrid([
+        addMetricCards([
+            ("Activity Score", "\(stats.score) / 100"),
+            ("Active Time", ActivityService.formatDuration(stats.activeSeconds)),
             ("Clicks", ActivityService.formatCount(stats.clicks)),
             ("Double-clicks", ActivityService.formatCount(stats.doubleClicks)),
             ("Scrolls", ActivityService.formatCount(stats.scrolls)),
             ("Cursor Distance", ActivityService.formatDistance(px: stats.distancePx)),
-            ("Active Time", ActivityService.formatDuration(stats.activeSeconds)),
             ("Idle Time", ActivityService.formatDuration(stats.idleSeconds)),
             ("Longest Session", ActivityService.formatDuration(stats.longestSessionSeconds)),
-            ("Last Activity", stats.lastActivity.map(Self.timeString) ?? "—"),
             ("Avg Cursor Speed", String(format: "%.0f px/s", avgSpeed)),
             ("Max Cursor Speed", String(format: "%.0f px/s", stats.maxSpeedPxPerSec)),
-            ("Activity Score", "\(stats.score) / 100"),
+            ("Last Activity", stats.lastActivity.map(Self.timeString) ?? "—"),
         ])
 
+        addSeparator()
         addSection("Activity Timeline")
-        let timeline = TimelineView(bins: stats.hourBins)
-        contentStack.addArrangedSubview(timeline)
-        timeline.widthAnchor.constraint(equalToConstant: 520).isActive = true
         var caption: [String] = []
         if let first = stats.firstInput { caption.append("Started \(Self.timeString(first))") }
         if let peak = stats.hourBins.enumerated().max(by: { $0.element < $1.element }),
@@ -203,10 +235,9 @@ final class ActivityWindowController: NSWindowController {
         } else if stats.firstInput != nil {
             caption.append("Session running")
         }
-        if !caption.isEmpty {
-            addCaption(caption.joined(separator: " · "))
-        }
+        addTimelineCard(bins: stats.hourBins, caption: caption.joined(separator: "  ·  "))
 
+        addSeparator()
         addBreakdown(
             realClicks: stats.clicks, realScrolls: stats.scrolls, realDistance: stats.distancePx,
             synClicks: stats.synClicks, synScrolls: stats.synScrolls,
@@ -214,8 +245,12 @@ final class ActivityWindowController: NSWindowController {
 
         let insights = service.insightsToday()
         if !insights.isEmpty {
+            addSeparator()
             addSection("Insights")
-            for line in insights { addCaption(line) }
+            let symbols = ["sparkles", "chart.line.uptrend.xyaxis", "clock", "flame"]
+            for (index, line) in insights.enumerated() {
+                addCallout(line, symbol: symbols[index % symbols.count])
+            }
         }
     }
 
@@ -225,7 +260,7 @@ final class ActivityWindowController: NSWindowController {
         let stats = service.periodStats(lastDays: days)
 
         addSection(title)
-        addMetricsGrid([
+        addMetricCards([
             ("Active Time", ActivityService.formatDuration(stats.activeSeconds)),
             ("Cursor Distance", ActivityService.formatDistance(px: stats.distancePx)),
             ("Clicks", ActivityService.formatCount(stats.clicks)),
@@ -236,6 +271,7 @@ final class ActivityWindowController: NSWindowController {
             ("Longest Session", ActivityService.formatDuration(stats.longestSessionSeconds)),
         ])
 
+        addSeparator()
         addBreakdown(
             realClicks: stats.clicks, realScrolls: stats.scrolls, realDistance: stats.distancePx,
             synClicks: stats.synClicks, synScrolls: stats.synScrolls,
@@ -262,9 +298,16 @@ final class ActivityWindowController: NSWindowController {
         let prevClicks = previous.reduce(0) { $0 + $1.realClicks }
         let current = service.periodStats(lastDays: 30)
 
+        addSeparator()
         addSection("Trends (vs previous 30 days)")
-        addCaption(Self.trendLine("Distance", current: current.distancePx, previous: prevDistance))
-        addCaption(Self.trendLine("Clicks", current: Double(current.clicks), previous: Double(prevClicks)))
+        addCallout(
+            Self.trendLine("Distance", current: current.distancePx, previous: prevDistance),
+            symbol: current.distancePx >= prevDistance
+                ? "chart.line.uptrend.xyaxis" : "chart.line.downtrend.xyaxis")
+        addCallout(
+            Self.trendLine("Clicks", current: Double(current.clicks), previous: Double(prevClicks)),
+            symbol: Double(current.clicks) >= Double(prevClicks)
+                ? "chart.line.uptrend.xyaxis" : "chart.line.downtrend.xyaxis")
     }
 
     private static func trendLine(_ name: String, current: Double, previous: Double) -> String {
@@ -280,7 +323,7 @@ final class ActivityWindowController: NSWindowController {
         let stats = service.periodStats(lastDays: nil)
 
         addSection("All Time")
-        addMetricsGrid([
+        addMetricCards([
             ("Cursor Distance", ActivityService.formatDistance(px: stats.distancePx)),
             ("Clicks", ActivityService.formatCount(stats.clicks)),
             ("Double-clicks", ActivityService.formatCount(stats.doubleClicks)),
@@ -291,30 +334,37 @@ final class ActivityWindowController: NSWindowController {
             ("Avg Activity Score", "\(stats.avgScore) / 100"),
         ])
 
+        addSeparator()
         addBreakdown(
             realClicks: stats.clicks, realScrolls: stats.scrolls, realDistance: stats.distancePx,
             synClicks: stats.synClicks, synScrolls: stats.synScrolls,
             synDistance: stats.synDistancePx, synMoves: stats.synEvents)
 
+        addSeparator()
         addSection("Personal Records")
         let records = service.personalRecords()
         if let best = records.maxDistanceDay {
-            addCaption("Longest cursor distance in a day: "
-                + "\(ActivityService.formatDistance(px: best.distancePx)) (\(Self.dayString(best.day)))")
+            addCallout("Longest cursor distance in a day: "
+                + "\(ActivityService.formatDistance(px: best.distancePx)) (\(Self.dayString(best.day)))",
+                symbol: "trophy")
         }
         if let best = records.maxClicksDay {
-            addCaption("Most clicks in a day: "
-                + "\(ActivityService.formatCount(best.clicks)) (\(Self.dayString(best.day)))")
+            addCallout("Most clicks in a day: "
+                + "\(ActivityService.formatCount(best.clicks)) (\(Self.dayString(best.day)))",
+                symbol: "trophy")
         }
         if let best = records.longestSession {
-            addCaption("Longest work session: "
-                + "\(ActivityService.formatDuration(best.duration)) (\(Self.dayString(ActivityStore.dayKey(best.start))))")
+            addCallout("Longest work session: "
+                + "\(ActivityService.formatDuration(best.duration)) (\(Self.dayString(ActivityStore.dayKey(best.start))))",
+                symbol: "trophy")
         }
         if let best = records.mostActiveDay {
-            addCaption("Most active day: \(Self.dayString(best.day)) (score \(best.score))")
+            addCallout("Most active day: \(Self.dayString(best.day)) (score \(best.score))",
+                symbol: "flame")
         }
         if records.maxDistanceDay == nil && records.longestSession == nil {
-            addCaption("No records yet — they'll appear as activity accumulates.")
+            addCallout("No records yet — they'll appear as activity accumulates.",
+                symbol: "hourglass")
         }
     }
 
@@ -326,88 +376,205 @@ final class ActivityWindowController: NSWindowController {
         contentStack.addArrangedSubview(label)
     }
 
+    private func addSeparator() {
+        let box = NSBox()
+        box.boxType = .separator
+        contentStack.addArrangedSubview(box)
+        box.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+    }
+
     private func addCaption(_ text: String) {
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = .systemFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
         contentStack.addArrangedSubview(label)
-        label.widthAnchor.constraint(equalToConstant: 520).isActive = true
+        label.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
     }
 
-    /// Two metric pairs per row: name (secondary) + value (semibold).
-    private func addMetricsGrid(_ metrics: [(String, String)]) {
-        let grid = NSGridView()
-        grid.columnSpacing = 10
-        grid.rowSpacing = 8
+    /// Rounded card containing one content view inset by `padding`.
+    private func card(_ content: NSView, padding: CGFloat = ActivityWindowController.cardPadding) -> NSView {
+        let card = CardView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        content.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: card.topAnchor, constant: padding),
+            content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -padding),
+            content.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: padding),
+            content.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -padding),
+        ])
+        return card
+    }
+
+    /// 2-column grid of rounded metric cards.
+    private func addMetricCards(_ metrics: [(String, String)]) {
         var index = 0
         while index < metrics.count {
-            var views: [NSView] = []
+            let rowStack = NSStackView()
+            rowStack.orientation = .horizontal
+            rowStack.spacing = 12
+            rowStack.distribution = .fillEqually
             for pair in metrics[index..<min(index + 2, metrics.count)] {
-                let name = NSTextField(labelWithString: pair.0)
-                name.font = .systemFont(ofSize: 11)
-                name.textColor = .secondaryLabelColor
-                let value = NSTextField(labelWithString: pair.1)
-                value.font = .systemFont(ofSize: 13, weight: .semibold)
-                views.append(name)
-                views.append(value)
+                rowStack.addArrangedSubview(metricCard(title: pair.0, value: pair.1))
             }
-            while views.count < 4 { views.append(NSGridCell.emptyContentView) }
-            grid.addRow(with: views)
+            // Odd trailing card keeps half width: pad the row with an empty view.
+            if metrics.count - index == 1 {
+                rowStack.addArrangedSubview(NSView())
+            }
+            contentStack.addArrangedSubview(rowStack)
+            rowStack.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
             index += 2
         }
-        grid.column(at: 0).width = 130
-        if grid.numberOfColumns > 2 { grid.column(at: 2).width = 130 }
-        contentStack.addArrangedSubview(grid)
     }
 
+    private func metricCard(title: String, value: String) -> NSView {
+        let valueLabel = NSTextField(labelWithString: value)
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: 17, weight: .semibold)
+        valueLabel.textColor = .labelColor
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 11)
+        titleLabel.textColor = .secondaryLabelColor
+        let stack = NSStackView(views: [valueLabel, titleLabel])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 2
+        return card(stack, padding: 14)
+    }
+
+    /// Timeline bar chart inside a padded card, caption underneath.
+    private func addTimelineCard(bins: [Int], caption: String) {
+        let timeline = TimelineView(bins: bins)
+        let stack = NSStackView(views: [timeline])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        timeline.widthAnchor.constraint(
+            equalToConstant: Self.contentWidth - 2 * Self.cardPadding).isActive = true
+        if !caption.isEmpty {
+            let label = NSTextField(labelWithString: caption)
+            label.font = .systemFont(ofSize: 10)
+            label.textColor = .secondaryLabelColor
+            stack.addArrangedSubview(label)
+        }
+        let cardView = card(stack)
+        contentStack.addArrangedSubview(cardView)
+        cardView.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+    }
+
+    /// Real vs Synthetic as horizontal bar comparisons, one block per metric.
     private func addBreakdown(
         realClicks: Int, realScrolls: Int, realDistance: Double,
         synClicks: Int, synScrolls: Int, synDistance: Double, synMoves: Int
     ) {
         addSection("Real vs Synthetic")
-        let grid = NSGridView()
-        grid.columnSpacing = 18
-        grid.rowSpacing = 4
 
-        func cell(_ text: String, bold: Bool = false, secondary: Bool = false) -> NSTextField {
-            let label = NSTextField(labelWithString: text)
-            label.font = .systemFont(ofSize: 11, weight: bold ? .semibold : .regular)
-            if secondary { label.textColor = .secondaryLabelColor }
-            return label
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 12
+
+        stack.addArrangedSubview(duoBarBlock(
+            name: "Clicks",
+            real: Double(realClicks), syn: Double(synClicks),
+            realText: ActivityService.formatCount(realClicks),
+            synText: ActivityService.formatCount(synClicks)))
+        stack.addArrangedSubview(duoBarBlock(
+            name: "Scrolls",
+            real: Double(realScrolls), syn: Double(synScrolls),
+            realText: ActivityService.formatCount(realScrolls),
+            synText: ActivityService.formatCount(synScrolls)))
+        stack.addArrangedSubview(duoBarBlock(
+            name: "Distance",
+            real: realDistance, syn: synDistance,
+            realText: ActivityService.formatDistance(px: realDistance),
+            synText: ActivityService.formatDistance(px: synDistance)))
+
+        let movesLabel = NSTextField(labelWithString:
+            "Synthetic moves: \(ActivityService.formatCount(synMoves))")
+        movesLabel.font = .systemFont(ofSize: 10)
+        movesLabel.textColor = .tertiaryLabelColor
+        stack.addArrangedSubview(movesLabel)
+
+        for block in stack.arrangedSubviews where block !== movesLabel {
+            block.widthAnchor.constraint(
+                equalToConstant: Self.contentWidth - 2 * Self.cardPadding).isActive = true
         }
 
-        grid.addRow(with: [
-            cell(""), cell("Clicks", secondary: true), cell("Scrolls", secondary: true),
-            cell("Distance", secondary: true), cell("Moves", secondary: true),
-        ])
-        grid.addRow(with: [
-            cell("Real", bold: true),
-            cell(ActivityService.formatCount(realClicks)),
-            cell(ActivityService.formatCount(realScrolls)),
-            cell(ActivityService.formatDistance(px: realDistance)),
-            cell("—"),
-        ])
-        grid.addRow(with: [
-            cell("Synthetic", bold: true),
-            cell(ActivityService.formatCount(synClicks)),
-            cell(ActivityService.formatCount(synScrolls)),
-            cell(ActivityService.formatDistance(px: synDistance)),
-            cell(ActivityService.formatCount(synMoves)),
-        ])
-        grid.addRow(with: [
-            cell("Combined", bold: true),
-            cell(ActivityService.formatCount(realClicks + synClicks)),
-            cell(ActivityService.formatCount(realScrolls + synScrolls)),
-            cell(ActivityService.formatDistance(px: realDistance + synDistance)),
-            cell(ActivityService.formatCount(synMoves)),
-        ])
-        contentStack.addArrangedSubview(grid)
+        let cardView = card(stack)
+        contentStack.addArrangedSubview(cardView)
+        cardView.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+    }
+
+    /// One metric block: name + two labeled horizontal bars (Real / Synthetic),
+    /// scaled against the larger of the two values.
+    private func duoBarBlock(
+        name: String, real: Double, syn: Double, realText: String, synText: String
+    ) -> NSView {
+        let maxValue = max(real, syn, 1)
+
+        let nameLabel = NSTextField(labelWithString: name)
+        nameLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        nameLabel.textColor = .secondaryLabelColor
+
+        func barRow(tag: String, value: Double, text: String, color: NSColor) -> NSView {
+            let tagLabel = NSTextField(labelWithString: tag)
+            tagLabel.font = .systemFont(ofSize: 10)
+            tagLabel.textColor = .tertiaryLabelColor
+            tagLabel.widthAnchor.constraint(equalToConstant: 58).isActive = true
+            let bar = BarView(ratio: value / maxValue, color: color)
+            bar.heightAnchor.constraint(equalToConstant: 8).isActive = true
+            let valueLabel = NSTextField(labelWithString: text)
+            valueLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+            valueLabel.textColor = .labelColor
+            valueLabel.alignment = .right
+            valueLabel.widthAnchor.constraint(equalToConstant: 64).isActive = true
+            let rowStack = NSStackView(views: [tagLabel, bar, valueLabel])
+            rowStack.orientation = .horizontal
+            rowStack.alignment = .centerY
+            rowStack.spacing = 8
+            return rowStack
+        }
+
+        let realRow = barRow(tag: "Real", value: real, text: realText, color: .controlAccentColor)
+        let synRow = barRow(tag: "Synthetic", value: syn, text: synText, color: .systemGray)
+
+        let block = NSStackView(views: [nameLabel, realRow, synRow])
+        block.orientation = .vertical
+        block.alignment = .leading
+        block.spacing = 4
+        for bars in [realRow, synRow] {
+            bars.widthAnchor.constraint(equalTo: block.widthAnchor).isActive = true
+        }
+        return block
+    }
+
+    /// Callout row: leading SF Symbol in accent tint + wrapping text, on a card.
+    private func addCallout(_ text: String, symbol: String) {
+        let icon = NSImageView()
+        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        icon.symbolConfiguration = .init(pointSize: 14, weight: .medium)
+        icon.contentTintColor = .controlAccentColor
+        icon.widthAnchor.constraint(equalToConstant: 22).isActive = true
+
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .labelColor
+
+        let rowStack = NSStackView(views: [icon, label])
+        rowStack.orientation = .horizontal
+        rowStack.alignment = .centerY
+        rowStack.spacing = 10
+
+        let cardView = card(rowStack, padding: 12)
+        contentStack.addArrangedSubview(cardView)
+        cardView.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
     }
 
     private func addPerDayList(
         _ perDay: [(day: String, distancePx: Double, clicks: Int, activeSeconds: Double, score: Int)]
     ) {
         guard !perDay.isEmpty else { return }
+        addSeparator()
         addSection("By Day")
         for entry in perDay {
             addCaption("\(Self.dayString(entry.day)) — "
@@ -435,50 +602,130 @@ final class ActivityWindowController: NSWindowController {
     }
 }
 
-// MARK: - Timeline view
+// MARK: - Card view
 
-/// 24-hour activity strip: one bar per hour, height ∝ real event count.
-private final class TimelineView: NSView {
+/// Rounded, subtly filled container. Colors resolve in `updateLayer` so the
+/// card re-tints itself on light/dark appearance changes.
+private final class CardView: NSView {
 
-    private let bins: [Int]
-
-    init(bins: [Int]) {
-        self.bins = bins
+    init() {
         super.init(frame: .zero)
-        heightAnchor.constraint(equalToConstant: 72).isActive = true
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.cornerRadius = 10
+        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.045).cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.5).cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+}
+
+// MARK: - Bar view
+
+/// Single horizontal bar: full-width rounded track + proportional fill.
+private final class BarView: NSView {
+
+    private let ratio: CGFloat
+    private let color: NSColor
+
+    init(ratio: Double, color: NSColor) {
+        self.ratio = CGFloat(min(max(ratio, 0), 1))
+        self.color = color
+        super.init(frame: .zero)
+        setContentHuggingPriority(.init(1), for: .horizontal)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
 
     override func draw(_ dirtyRect: NSRect) {
-        let barArea = NSRect(x: 0, y: 16, width: bounds.width, height: bounds.height - 20)
+        let radius = bounds.height / 2
+        NSColor.separatorColor.withAlphaComponent(0.35).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
+
+        guard ratio > 0 else { return }
+        let fillWidth = max(bounds.width * ratio, bounds.height)  // keep a round nub visible
+        let fillRect = NSRect(x: 0, y: 0, width: fillWidth, height: bounds.height)
+        color.setFill()
+        NSBezierPath(roundedRect: fillRect, xRadius: radius, yRadius: radius).fill()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+}
+
+// MARK: - Timeline view
+
+/// 24-hour activity strip: one bar per hour, height ∝ real event count.
+/// Drawn with semantic colors; redraws on appearance change.
+private final class TimelineView: NSView {
+
+    private let bins: [Int]
+    private static let labelHeight: CGFloat = 16
+    private static let topPadding: CGFloat = 8
+
+    init(bins: [Int]) {
+        self.bins = bins
+        super.init(frame: .zero)
+        heightAnchor.constraint(equalToConstant: 120).isActive = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let barArea = NSRect(
+            x: 0, y: Self.labelHeight,
+            width: bounds.width,
+            height: bounds.height - Self.labelHeight - Self.topPadding)
         let maxBin = max(bins.max() ?? 0, 1)
         let barWidth = barArea.width / 24
 
+        // Baseline.
+        NSColor.separatorColor.setFill()
+        NSRect(x: 0, y: barArea.minY - 1, width: bounds.width, height: 1).fill()
+
         for (hour, count) in bins.enumerated() {
             let x = barArea.minX + CGFloat(hour) * barWidth
-            // Baseline tick for empty hours so the strip reads as a timeline.
+            // Empty hours keep a faint stub so the strip reads as a timeline.
             let height = count > 0
-                ? max(3, barArea.height * CGFloat(count) / CGFloat(maxBin))
-                : 1.5
+                ? max(4, barArea.height * CGFloat(count) / CGFloat(maxBin))
+                : 2
             let bar = NSRect(
-                x: x + 1, y: barArea.minY,
-                width: barWidth - 2, height: height)
+                x: x + 2, y: barArea.minY,
+                width: barWidth - 4, height: height)
             (count > 0 ? NSColor.controlAccentColor : NSColor.separatorColor).setFill()
-            NSBezierPath(roundedRect: bar, xRadius: 1.5, yRadius: 1.5).fill()
+            NSBezierPath(roundedRect: bar, xRadius: 2, yRadius: 2).fill()
         }
 
-        // Hour labels.
+        // Hour labels every 6 hours.
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 9),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular),
             .foregroundColor: NSColor.tertiaryLabelColor,
         ]
         for hour in stride(from: 0, through: 24, by: 6) {
             let x = barArea.minX + CGFloat(hour) * barWidth
             let text = String(format: "%02d", hour % 24)
             NSAttributedString(string: text, attributes: attributes)
-                .draw(at: NSPoint(x: min(x, bounds.width - 14), y: 0))
+                .draw(at: NSPoint(x: min(x, bounds.width - 16), y: 1))
         }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
     }
 }

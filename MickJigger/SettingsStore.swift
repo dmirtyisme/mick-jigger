@@ -18,7 +18,7 @@ final class SettingsStore {
         static let marginBottom       = "mjv1.marginBottom"        // Int, pixels
         static let marginLeft         = "mjv1.marginLeft"          // Int, pixels
         static let marginRight        = "mjv1.marginRight"         // Int, pixels
-        static let launchAtLogin      = "mjv1.launchAtLogin"       // Bool (no UI in MVP)
+        static let launchAtLogin      = "mjv1.launchAtLogin"       // Bool
         // V2 interaction features — all opt-in, default OFF.
         static let clickEnabled       = "mjv1.clickEnabled"        // Bool
         static let scrollEnabled      = "mjv1.scrollEnabled"       // Bool
@@ -91,6 +91,11 @@ final class SettingsStore {
     var marginRight: Int {
         get { defaults.integer(forKey: Key.marginRight) }
         set { set(newValue, forKey: Key.marginRight) }
+    }
+
+    var launchAtLogin: Bool {
+        get { defaults.bool(forKey: Key.launchAtLogin) }
+        set { set(newValue, forKey: Key.launchAtLogin) }
     }
 
     var clickEnabled: Bool {

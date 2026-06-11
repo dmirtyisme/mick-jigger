@@ -77,71 +77,57 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     /// Returns the menu bar icon for the current state.
-    /// The four asset-catalog PDFs are vector template images — macOS handles
-    /// light/dark menu bar tinting automatically. Active states get an accent
-    /// colour tint at draw time; the badge overlay for permission warnings is
-    /// composited on top at runtime so we don't need a fifth PDF.
+    ///
+    /// All four state assets are vector template PDFs and are used in template
+    /// mode — macOS tints them for the light/dark menu bar (and the pressed
+    /// highlight) automatically. State is conveyed by the artwork itself:
+    /// outline (inactive), outline+dot (monitoring), filled (active).
+    /// The only non-template case is the permission warning, whose red badge
+    /// must stay red; its base glyph is tinted with `labelColor` at draw time
+    /// so it still adapts to both menu bar appearances.
     private static func icon(for state: JigglerState, permissionWarning: Bool) -> NSImage {
-        // Choose the base PDF asset.
         let assetName: String
         switch state {
-        case .inactive:    assetName = "menubar_inactive"
-        case .monitoring:  assetName = "menubar_monitoring"
-        case .activeManual, .activeAuto:
-                           assetName = "menubar_active"
+        case .inactive:     assetName = "menubar_inactive"
+        case .monitoring:   assetName = "menubar_monitoring"
+        case .activeManual: assetName = "menubar_active"
+        case .activeAuto:   assetName = "menubar_active_auto"
         }
 
-        // If no badge is needed and we're not active, the template PDF is used
-        // as-is — NSImage(named:) loads it and isTemplate handles tinting.
         guard let base = NSImage(named: assetName) else {
             return fallbackIcon(for: state, permissionWarning: permissionWarning)
         }
-        base.isTemplate = (state == .inactive || state == .monitoring) && !permissionWarning
+        base.isTemplate = true
 
-        // Active states: tint with the system accent colour.
-        if state.isActive && !permissionWarning {
-            return tinted(base, color: .controlAccentColor)
-        }
-
-        // Badges (permission warning or monitoring dot) need a composite image.
         if permissionWarning {
             return compositeWithBadge(base, color: .systemRed)
         }
-        if state == .monitoring {
-            return compositeWithBadge(base, color: .systemOrange)
-        }
-
         return base
     }
 
     // MARK: - Icon helpers
 
-    /// Tint a template image with a solid colour.
-    private static func tinted(_ source: NSImage, color: NSColor) -> NSImage {
-        let size = NSSize(width: 22, height: 22)
-        let result = NSImage(size: size, flipped: false) { rect in
-            color.set()
-            let mask = source
-            mask.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
-            return true
-        }
-        result.isTemplate = false
-        return result
-    }
-
-    /// Composite a badge dot over a base image.
+    /// Composite a colored badge dot over a template base. The drawing handler
+    /// runs at draw time with the menu bar's effective appearance, so
+    /// `labelColor` resolves to the right black/white automatically even
+    /// though the result can't be a template image (the badge must keep its
+    /// own color).
     private static func compositeWithBadge(_ base: NSImage, color: NSColor) -> NSImage {
         let size = NSSize(width: 22, height: 22)
         let result = NSImage(size: size, flipped: false) { rect in
+            // Tint the template artwork with the appearance's label color.
             base.draw(in: rect)
-            let diameter: CGFloat = 5
+            NSColor.labelColor.set()
+            rect.fill(using: .sourceAtop)
+
+            let diameter: CGFloat = 6
             let badgeRect = NSRect(
                 x: rect.maxX - diameter - 1,
                 y: rect.maxY - diameter - 1,
                 width: diameter,
                 height: diameter
             )
-            // Clear ring so the dot reads against the symbol.
+            // Clear ring so the dot reads against the glyph.
             NSGraphicsContext.current?.cgContext.setBlendMode(.clear)
             NSBezierPath(ovalIn: badgeRect.insetBy(dx: -1.5, dy: -1.5)).fill()
             NSGraphicsContext.current?.cgContext.setBlendMode(.normal)
@@ -158,7 +144,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         let name = state.isActive ? "computermouse.fill" : "computermouse"
         let image = NSImage(systemSymbolName: name, accessibilityDescription: "Mick Jigger")
             ?? NSImage(systemSymbolName: "cursorarrow", accessibilityDescription: "Mick Jigger")!
-        image.isTemplate = !state.isActive && !permissionWarning
+        image.isTemplate = !permissionWarning
         return image
     }
 }

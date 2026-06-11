@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 
 /// Interface the popover (and status item) use to drive the state machine.
 /// Implemented by AppDelegate.
@@ -19,7 +20,7 @@ protocol JigglerControlling: AnyObject {
 }
 
 /// Programmatic AppKit popover content. Layout follows PRODUCT_SPEC.md.
-/// Launch-at-login and hotkeys are out of MVP scope and intentionally absent.
+/// Hotkeys are out of MVP scope and intentionally absent.
 final class PopoverViewController: NSViewController, NSTextFieldDelegate {
 
     private weak var controller: JigglerControlling?
@@ -61,7 +62,8 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         labels: SettingsStore.autoStartThresholdOptions.map(SettingsStore.label(forSeconds:)),
         trackingMode: .selectOne, target: nil, action: nil)
 
-    private let marginsDisclosure = NSButton()
+    private let marginsChevron = NSImageView()
+    private var marginsExpanded = false
     private let marginsContainer = NSStackView()
     private let marginTopField = NSTextField()
     private let marginBottomField = NSTextField()
@@ -72,6 +74,8 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
 
     // Activity tracking quick stats (today: clicks · distance · active time).
     private let activityStatsLabel = NSTextField(labelWithString: "")
+
+    private let launchAtLoginSwitch = NSSwitch()
 
     init(controller: JigglerControlling, settings: SettingsStore) {
         self.controller = controller
@@ -195,16 +199,20 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
 
         root.addArrangedSubview(separator())
 
-        // Safe area margins (disclosure section).
-        marginsDisclosure.title = "Safe area margins"
-        marginsDisclosure.bezelStyle = .disclosure
-        marginsDisclosure.setButtonType(.pushOnPushOff)
-        marginsDisclosure.state = .off
-        marginsDisclosure.target = self
-        marginsDisclosure.action = #selector(marginsDisclosureToggled)
+        // Safe area margins (disclosure section). The entire header row is the
+        // click target, not just the chevron — a gesture recognizer on the row
+        // stack covers its full pinned width, including the trailing spacer.
+        marginsChevron.image = NSImage(
+            systemSymbolName: "chevron.right", accessibilityDescription: "Expand")
+        marginsChevron.symbolConfiguration = .init(pointSize: 11, weight: .semibold)
+        marginsChevron.contentTintColor = .secondaryLabelColor
+        marginsChevron.wantsLayer = true
         let disclosureLabel = NSTextField(labelWithString: "Safe area margins")
         disclosureLabel.font = .systemFont(ofSize: 12)
-        root.addArrangedSubview(row(marginsDisclosure, disclosureLabel))
+        let marginsHeaderRow = row(marginsChevron, disclosureLabel, spacer())
+        marginsHeaderRow.addGestureRecognizer(
+            NSClickGestureRecognizer(target: self, action: #selector(marginsHeaderClicked)))
+        root.addArrangedSubview(marginsHeaderRow)
 
         buildMarginsContainer()
         marginsContainer.isHidden = true
@@ -225,6 +233,14 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
 
         root.addArrangedSubview(separator())
 
+        // Launch at login (SMAppService-backed).
+        let launchLabel = NSTextField(labelWithString: "Launch at login")
+        launchLabel.font = .systemFont(ofSize: 12)
+        launchAtLoginSwitch.target = self
+        launchAtLoginSwitch.action = #selector(launchAtLoginToggled)
+        let launchRow = row(launchLabel, spacer(), launchAtLoginSwitch)
+        root.addArrangedSubview(launchRow)
+
         // Quit.
         let quitButton = NSButton(title: "Quit Mick Jigger", target: self, action: #selector(quit))
         quitButton.bezelStyle = .inline
@@ -235,7 +251,8 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         for item in [permissionBanner, header, sublineLabel, intervalControl,
                      randomRow, distanceControl, clickRow, clickIntervalRow,
                      scrollRow, interactionWarningLabel, autoStartRow,
-                     thresholdRow, marginsContainer, activityRow] {
+                     thresholdRow, marginsHeaderRow, marginsContainer,
+                     activityRow, launchRow] {
             item.widthAnchor.constraint(
                 equalTo: root.widthAnchor, constant: -28).isActive = true
         }
@@ -431,6 +448,14 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
             activityStatsLabel.stringValue = "Tracking off — needs Input Monitoring"
         }
 
+        // Launch at login. SMAppService is the source of truth — the user can
+        // also remove the login item from System Settings behind our back.
+        let loginEnabled = SMAppService.mainApp.status == .enabled
+        launchAtLoginSwitch.state = loginEnabled ? .on : .off
+        if settings.launchAtLogin != loginEnabled {
+            settings.launchAtLogin = loginEnabled
+        }
+
         // Margins.
         marginTopField.integerValue = settings.marginTop
         marginBottomField.integerValue = settings.marginBottom
@@ -525,9 +550,32 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         refresh()
     }
 
-    @objc private func marginsDisclosureToggled() {
-        marginsContainer.isHidden = marginsDisclosure.state == .off
+    @objc private func marginsHeaderClicked() {
+        marginsExpanded.toggle()
+        marginsContainer.isHidden = !marginsExpanded
+        // chevron.right rotated -90° points down.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.18
+            marginsChevron.animator().frameCenterRotation = marginsExpanded ? -90 : 0
+        }
         updatePreferredSize()
+    }
+
+    @objc private func launchAtLoginToggled() {
+        let enable = launchAtLoginSwitch.state == .on
+        do {
+            if enable {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            settings.launchAtLogin = enable
+        } catch {
+            // Registration can fail (e.g. app not in /Applications on some
+            // configurations). Revert the switch so UI reflects reality.
+            NSLog("Launch at login change failed: \(error.localizedDescription)")
+            launchAtLoginSwitch.state = enable ? .off : .on
+        }
     }
 
     @objc private func marginFieldChanged(_ sender: NSTextField) {
