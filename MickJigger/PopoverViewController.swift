@@ -221,7 +221,7 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         root.addArrangedSubview(separator())
 
         // Activity tracking: today's quick stats + window button.
-        root.addArrangedSubview(sectionLabel("Activity"))
+        root.addArrangedSubview(sectionLabel("Activity Tracking"))
         activityStatsLabel.font = .systemFont(ofSize: 11)
         activityStatsLabel.textColor = .secondaryLabelColor
         let activityButton = NSButton(
@@ -230,6 +230,10 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         activityButton.controlSize = .small
         let activityRow = row(activityStatsLabel, spacer(), activityButton)
         root.addArrangedSubview(activityRow)
+        let activitySubtitle = NSTextField(labelWithString: "Runs independently from jiggling")
+        activitySubtitle.font = .systemFont(ofSize: 11)
+        activitySubtitle.textColor = .secondaryLabelColor
+        root.addArrangedSubview(activitySubtitle)
 
         root.addArrangedSubview(separator())
 

@@ -23,6 +23,7 @@ final class ActivityWindowController: NSWindowController {
         labels: ["Today", "Week", "Month", "All Time", "Trail"],
         trackingMode: .selectOne, target: nil, action: nil)
     private let shareButton = NSButton()
+    private let trackingStatusLabel = NSTextField(labelWithString: "")
     private let contentStack = NSStackView()
     private var refreshTimer: Timer?
     private var trailView: TrailView?
@@ -83,6 +84,10 @@ final class ActivityWindowController: NSWindowController {
         headerRow.spacing = 8
         root.addArrangedSubview(headerRow)
 
+        // One-line tracking status under the tab bar; text set in refresh().
+        trackingStatusLabel.font = .systemFont(ofSize: 11)
+        root.addArrangedSubview(trackingStatusLabel)
+
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
         contentStack.spacing = 12
@@ -127,8 +132,9 @@ final class ActivityWindowController: NSWindowController {
         permissionBanner.alignment = .leading
         permissionBanner.spacing = 6
         let text = NSTextField(wrappingLabelWithString:
-            "⚠ Input Monitoring access required\nActivity tracking needs Input Monitoring "
-            + "permission to observe your mouse input. Nothing leaves this Mac.")
+            "Activity tracking runs independently — even when jiggling is off.\n"
+            + "Requires Input Monitoring permission to observe mouse input.\n"
+            + "Nothing leaves this Mac.")
         text.font = .systemFont(ofSize: 11)
         text.textColor = .systemOrange
         let enableButton = NSButton(
@@ -189,6 +195,7 @@ final class ActivityWindowController: NSWindowController {
             service.start()
         }
         permissionBanner.isHidden = service.isTracking
+        updateTrackingStatus()
 
         contentStack.arrangedSubviews.forEach {
             contentStack.removeArrangedSubview($0)
@@ -202,6 +209,40 @@ final class ActivityWindowController: NSWindowController {
         case 3: buildAllTimeTab()
         default: buildTrailTab()
         }
+    }
+
+    /// "● Tracking — started 9:14" (green dot) while the tap is live,
+    /// "○ Tracking paused — Input Monitoring required" (gray dot) otherwise.
+    private func updateTrackingStatus() {
+        let dot: String
+        let dotColor: NSColor
+        let text: String
+        if service.isTracking {
+            dot = "●"
+            dotColor = .systemGreen
+            if let first = service.todaySnapshot().firstInput {
+                text = " Tracking  —  started \(Self.timeString(first))"
+            } else {
+                text = " Tracking"
+            }
+        } else {
+            dot = "○"
+            dotColor = .systemGray
+            text = " Tracking paused  —  Input Monitoring required"
+        }
+        let status = NSMutableAttributedString(
+            string: dot,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: dotColor,
+            ])
+        status.append(NSAttributedString(
+            string: text,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]))
+        trackingStatusLabel.attributedStringValue = status
     }
 
     // MARK: - Today
