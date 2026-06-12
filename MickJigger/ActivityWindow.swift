@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// Stats window (not a popover) opened from the menu bar popover's
 /// "Activity" button. Tabs: Today / Week / Month / All Time.
@@ -19,11 +20,12 @@ final class ActivityWindowController: NSWindowController {
 
     private let permissionBanner = NSStackView()
     private let tabs = NSSegmentedControl(
-        labels: ["Today", "Week", "Month", "All Time"],
+        labels: ["Today", "Week", "Month", "All Time", "Trail"],
         trackingMode: .selectOne, target: nil, action: nil)
     private let shareButton = NSButton()
     private let contentStack = NSStackView()
     private var refreshTimer: Timer?
+    private var trailView: TrailView?
 
     init(service: ActivityService) {
         self.service = service
@@ -192,11 +194,13 @@ final class ActivityWindowController: NSWindowController {
             contentStack.removeArrangedSubview($0)
             $0.removeFromSuperview()
         }
+        trailView = nil
         switch tabs.selectedSegment {
         case 0: buildTodayTab()
         case 1: buildPeriodTab(days: 7, title: "Last 7 days")
         case 2: buildMonthTab()
-        default: buildAllTimeTab()
+        case 3: buildAllTimeTab()
+        default: buildTrailTab()
         }
     }
 
@@ -366,6 +370,57 @@ final class ActivityWindowController: NSWindowController {
             addCallout("No records yet — they'll appear as activity accumulates.",
                 symbol: "hourglass")
         }
+    }
+
+    // MARK: - Trail
+
+    private func buildTrailTab() {
+        addSection("Cursor Trail — Today")
+
+        let points = service.trailPoints()
+        let trail = TrailView(points: points)
+        trailView = trail
+        contentStack.addArrangedSubview(trail)
+        trail.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+        trail.heightAnchor.constraint(equalToConstant: 330).isActive = true
+
+        addCaption(points.isEmpty
+            ? "No cursor movement recorded yet today. The trail accumulates real "
+              + "(not synthetic) cursor positions and resets at midnight."
+            : "\(ActivityService.formatCount(points.count)) samples · real cursor "
+              + "movement only · resets at midnight")
+
+        let saveButton = NSButton(
+            title: "Save as PNG…", target: self, action: #selector(saveTrailPNG))
+        saveButton.bezelStyle = .rounded
+        let shareTrailButton = NSButton(
+            title: "Share", target: self, action: #selector(shareTrailPNG(_:)))
+        shareTrailButton.bezelStyle = .rounded
+        let buttonRow = NSStackView(views: [saveButton, shareTrailButton])
+        buttonRow.orientation = .horizontal
+        buttonRow.spacing = 8
+        contentStack.addArrangedSubview(buttonRow)
+    }
+
+    @objc private func saveTrailPNG() {
+        guard let window, let data = trailView?.pngData() else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.nameFieldStringValue = "MickJigger-Trail-\(ActivityStore.dayKey(Date())).png"
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try data.write(to: url)
+            } catch {
+                NSLog("Trail PNG export failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    @objc private func shareTrailPNG(_ sender: NSButton) {
+        guard let data = trailView?.pngData(), let image = NSImage(data: data) else { return }
+        let picker = NSSharingServicePicker(items: [image])
+        picker.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
     }
 
     // MARK: - Shared section builders
@@ -664,6 +719,135 @@ private final class BarView: NSView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         needsDisplay = true
+    }
+}
+
+// MARK: - Trail view
+
+/// Day-long cursor trail rendered as a smoothed line drawing over a fixed
+/// dark canvas (#0A0A0F — intentionally not semantic; the trail is an
+/// artwork-style export and looks the same in light and dark mode).
+/// Segment color shifts blue → white and the line gets thinner as cursor
+/// speed increases. The full desktop (all displays) is aspect-fit into view.
+private final class TrailView: NSView {
+
+    private let points: [TrailPoint]
+
+    private static let background = NSColor(srgbRed: 10 / 255, green: 10 / 255, blue: 15 / 255, alpha: 1)
+    /// Break the trail instead of connecting across idle gaps.
+    private static let gapSeconds: TimeInterval = 2.0
+    /// Cap on rendered points — decimates evenly above this for draw speed.
+    private static let maxRenderPoints = 12_000
+
+    init(points: [TrailPoint]) {
+        if points.count > Self.maxRenderPoints {
+            let step = points.count / Self.maxRenderPoints + 1
+            self.points = stride(from: 0, to: points.count, by: step).map { points[$0] }
+        } else {
+            self.points = points
+        }
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 10
+        layer?.masksToBounds = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    override func draw(_ dirtyRect: NSRect) {
+        Self.background.setFill()
+        bounds.fill()
+
+        guard points.count >= 3 else {
+            drawEmptyMessage()
+            return
+        }
+
+        // Desktop bounds in CGEvent space: x spans the Cocoa union directly;
+        // y is flipped, spanning [0, union.height].
+        let union = NSScreen.screens.map(\.frame).reduce(CGRect.null) { $0.union($1) }
+        let desktop = union.isNull
+            ? CGRect(x: 0, y: 0, width: 1920, height: 1080)
+            : CGRect(x: union.minX, y: 0, width: union.width, height: union.height)
+
+        let inset: CGFloat = 14
+        let scale = min(
+            (bounds.width - 2 * inset) / desktop.width,
+            (bounds.height - 2 * inset) / desktop.height)
+        let offset = CGPoint(
+            x: (bounds.width - desktop.width * scale) / 2,
+            y: (bounds.height - desktop.height * scale) / 2)
+
+        func map(_ p: TrailPoint) -> CGPoint {
+            CGPoint(
+                x: offset.x + (p.x - desktop.minX) * scale,
+                // CG y grows downward, view y grows upward.
+                y: offset.y + (desktop.maxY - p.y) * scale)
+        }
+
+        // Smoothed pass: each interior point contributes one curve from the
+        // previous midpoint to the next midpoint (quadratic through the point,
+        // expressed as cubic). Per-segment width/color follow that point's speed.
+        for i in 1..<(points.count - 1) {
+            let a = points[i - 1], b = points[i], c = points[i + 1]
+            if b.time - a.time > Self.gapSeconds || c.time - b.time > Self.gapSeconds {
+                continue
+            }
+            let pa = map(a), pb = map(b), pc = map(c)
+            let from = CGPoint(x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2)
+            let to = CGPoint(x: (pb.x + pc.x) / 2, y: (pb.y + pc.y) / 2)
+
+            let path = NSBezierPath()
+            path.move(to: from)
+            // Quadratic (control = pb) as cubic.
+            path.curve(
+                to: to,
+                controlPoint1: CGPoint(
+                    x: from.x + 2 / 3 * (pb.x - from.x), y: from.y + 2 / 3 * (pb.y - from.y)),
+                controlPoint2: CGPoint(
+                    x: to.x + 2 / 3 * (pb.x - to.x), y: to.y + 2 / 3 * (pb.y - to.y)))
+            path.lineWidth = Self.width(forSpeed: b.speed)
+            path.lineCapStyle = .round
+            Self.color(forSpeed: b.speed).setStroke()
+            path.stroke()
+        }
+    }
+
+    /// Faster = thinner: 2.2pt at rest down to 0.4pt at ≥2 500 px/s.
+    private static func width(forSpeed speed: Double) -> CGFloat {
+        let t = min(max(speed, 0) / 2_500, 1)
+        return CGFloat(2.2 - 1.8 * t)
+    }
+
+    /// Slow = blue, fast = white; constant low alpha so overlaps accumulate.
+    private static func color(forSpeed speed: Double) -> NSColor {
+        let t = CGFloat(min(max(speed, 0) / 2_500, 1))
+        return NSColor(
+            srgbRed: 0.35 + 0.65 * t,
+            green: 0.55 + 0.45 * t,
+            blue: 1.0,
+            alpha: 0.45)
+    }
+
+    private func drawEmptyMessage() {
+        let text = "No trail yet — move the mouse."
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.3),
+        ]
+        let string = NSAttributedString(string: text, attributes: attributes)
+        let size = string.size()
+        string.draw(at: NSPoint(
+            x: (bounds.width - size.width) / 2,
+            y: (bounds.height - size.height) / 2))
+    }
+
+    /// Renders the current canvas to PNG (at the window's backing scale).
+    func pngData() -> Data? {
+        guard let rep = bitmapImageRepForCachingDisplay(in: bounds) else { return nil }
+        cacheDisplay(in: bounds, to: rep)
+        return rep.representation(using: .png, properties: [:])
     }
 }
 

@@ -37,6 +37,17 @@ struct ActivityDeltas {
     }
 }
 
+/// One sampled real cursor position for the Trail view. Coordinates are in
+/// CGEvent global desktop space (top-left origin).
+struct TrailPoint {
+    let x: Double
+    let y: Double
+    /// Cursor speed at this sample in px/s (0 when unknown).
+    let speed: Double
+    /// Seconds since reference date — used to break the trail across idle gaps.
+    let time: TimeInterval
+}
+
 // MARK: - ActivityService (module entry point)
 
 /// Facade wiring tracker → detector → store. The only object the rest of the
@@ -115,6 +126,11 @@ final class ActivityService {
         windowController?.showWindow(nil)
         windowController?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Today's sampled real cursor positions for the Trail tab.
+    func trailPoints() -> [TrailPoint] {
+        tracker.trailSnapshot()
     }
 
     // MARK: Aggregated stats
@@ -432,6 +448,16 @@ final class ActivityTracker {
     private var lastCursorPosition: CGPoint?
     private var lastRealMoveTimestamp: UInt64?
 
+    /// Sampled real cursor positions for the Trail view, accumulated for the
+    /// current day and cleared at the first sample after midnight.
+    private var trail: [TrailPoint] = []
+    private var trailDayKey = ActivityStore.dayKey(Date())
+    /// Skip samples closer than this to the previous one (px).
+    private static let trailMinSampleDistance = 3.0
+    /// Decimation threshold: above this the buffer is halved (every 2nd point),
+    /// which preserves the trail's shape while bounding memory.
+    private static let trailMaxPoints = 60_000
+
     var isTapActive: Bool { tap != nil }
 
     /// Creates and installs the listen-only tap on the main run loop.
@@ -549,7 +575,8 @@ final class ActivityTracker {
                 pending.synDistancePx += distance
             } else {
                 pending.realDistancePx += distance
-                updateSpeed(distance: distance, timestamp: event.timestamp)
+                let speed = updateSpeed(distance: distance, timestamp: event.timestamp)
+                appendTrailPoint(position: position, speed: speed ?? 0, now: now)
                 noteRealActivity(at: now)
                 onRealEvent?(.move, distance, now)
             }
@@ -565,15 +592,45 @@ final class ActivityTracker {
         pending.hourBins[hour] += 1
     }
 
-    private func updateSpeed(distance: Double, timestamp: UInt64) {
+    /// Updates the max-speed counter and returns the instantaneous speed (px/s)
+    /// when it can be computed, nil for stale gaps and teleport artifacts.
+    @discardableResult
+    private func updateSpeed(distance: Double, timestamp: UInt64) -> Double? {
         defer { lastRealMoveTimestamp = timestamp }
-        guard let last = lastRealMoveTimestamp, timestamp > last else { return }
+        guard let last = lastRealMoveTimestamp, timestamp > last else { return nil }
         let dt = Double(timestamp - last) / 1_000_000_000  // ns → s
         // Ignore stale gaps and teleport artifacts (display switches etc.).
-        guard dt > 0, dt < 0.5 else { return }
+        guard dt > 0, dt < 0.5 else { return nil }
         let speed = distance / dt
-        guard speed < 50_000 else { return }
+        guard speed < 50_000 else { return nil }
         pending.maxSpeedPxPerSec = max(pending.maxSpeedPxPerSec, speed)
+        return speed
+    }
+
+    // MARK: Cursor trail
+
+    /// Today's sampled real cursor positions (empty right after midnight).
+    func trailSnapshot() -> [TrailPoint] {
+        guard ActivityStore.dayKey(Date()) == trailDayKey else { return [] }
+        return trail
+    }
+
+    private func appendTrailPoint(position: CGPoint, speed: Double, now: Date) {
+        let key = ActivityStore.dayKey(now)
+        if key != trailDayKey {
+            trail.removeAll()
+            trailDayKey = key
+        }
+        if let last = trail.last,
+           hypot(position.x - last.x, position.y - last.y) < Self.trailMinSampleDistance {
+            return
+        }
+        trail.append(TrailPoint(
+            x: position.x, y: position.y,
+            speed: speed, time: now.timeIntervalSinceReferenceDate))
+        if trail.count > Self.trailMaxPoints {
+            trail = stride(from: 0, to: trail.count, by: 2).map { trail[$0] }
+        }
     }
 
     deinit {
