@@ -62,7 +62,7 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         labels: SettingsStore.autoStartThresholdOptions.map(SettingsStore.label(forSeconds:)),
         trackingMode: .selectOne, target: nil, action: nil)
 
-    private let marginsChevron = NSImageView()
+    private let marginsHeaderButton = NSButton()
     private var marginsExpanded = false
     private let marginsContainer = NSStackView()
     private let marginTopField = NSTextField()
@@ -199,20 +199,20 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
 
         root.addArrangedSubview(separator())
 
-        // Safe area margins (disclosure section). The entire header row is the
-        // click target, not just the chevron — a gesture recognizer on the row
-        // stack covers its full pinned width, including the trailing spacer.
-        marginsChevron.image = NSImage(
-            systemSymbolName: "chevron.right", accessibilityDescription: "Expand")
-        marginsChevron.symbolConfiguration = .init(pointSize: 11, weight: .semibold)
-        marginsChevron.contentTintColor = .secondaryLabelColor
-        marginsChevron.wantsLayer = true
-        let disclosureLabel = NSTextField(labelWithString: "Safe area margins")
-        disclosureLabel.font = .systemFont(ofSize: 12)
-        let marginsHeaderRow = row(marginsChevron, disclosureLabel, spacer())
-        marginsHeaderRow.addGestureRecognizer(
-            NSClickGestureRecognizer(target: self, action: #selector(marginsHeaderClicked)))
-        root.addArrangedSubview(marginsHeaderRow)
+        // Safe area margins (disclosure section). The header is one borderless
+        // NSButton spanning the full popover width — chevron + label in a
+        // single row, every point of which is clickable.
+        marginsHeaderButton.title = " Safe area margins"
+        marginsHeaderButton.font = .systemFont(ofSize: 12)
+        marginsHeaderButton.image = Self.chevronImage(expanded: false)
+        marginsHeaderButton.imagePosition = .imageLeading
+        marginsHeaderButton.alignment = .left
+        marginsHeaderButton.isBordered = false
+        marginsHeaderButton.setButtonType(.momentaryChange)
+        marginsHeaderButton.contentTintColor = .labelColor
+        marginsHeaderButton.target = self
+        marginsHeaderButton.action = #selector(marginsHeaderClicked)
+        root.addArrangedSubview(marginsHeaderButton)
 
         buildMarginsContainer()
         marginsContainer.isHidden = true
@@ -251,7 +251,7 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         for item in [permissionBanner, header, sublineLabel, intervalControl,
                      randomRow, distanceControl, clickRow, clickIntervalRow,
                      scrollRow, interactionWarningLabel, autoStartRow,
-                     thresholdRow, marginsHeaderRow, marginsContainer,
+                     thresholdRow, marginsHeaderButton, marginsContainer,
                      activityRow, launchRow] {
             item.widthAnchor.constraint(
                 equalTo: root.widthAnchor, constant: -28).isActive = true
@@ -552,13 +552,41 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
 
     @objc private func marginsHeaderClicked() {
         marginsExpanded.toggle()
+        // NSStackView detaches hidden arranged subviews, so the collapsed
+        // fields are genuinely removed from layout, not just invisible.
         marginsContainer.isHidden = !marginsExpanded
-        // chevron.right rotated -90° points down.
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.18
-            marginsChevron.animator().frameCenterRotation = marginsExpanded ? -90 : 0
-        }
+        marginsHeaderButton.image = Self.chevronImage(expanded: marginsExpanded)
         updatePreferredSize()
+    }
+
+    /// "chevron.right" SF Symbol: as-is when collapsed (0°), or re-rendered
+    /// into a -90°-rotated NSImage (pointing down) when expanded. The rotated
+    /// rendition stays a template image so it tints with the button.
+    private static func chevronImage(expanded: Bool) -> NSImage? {
+        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        guard let base = NSImage(
+            systemSymbolName: "chevron.right",
+            accessibilityDescription: expanded ? "Collapse" : "Expand")?
+            .withSymbolConfiguration(config)
+        else { return nil }
+        guard expanded else { return base }
+
+        let size = NSSize(width: max(base.size.width, base.size.height),
+                          height: max(base.size.width, base.size.height))
+        let rotated = NSImage(size: size, flipped: false) { rect in
+            let transform = NSAffineTransform()
+            transform.translateX(by: rect.width / 2, yBy: rect.height / 2)
+            transform.rotate(byDegrees: -90)
+            transform.translateX(by: -rect.width / 2, yBy: -rect.height / 2)
+            transform.concat()
+            base.draw(in: NSRect(
+                x: (rect.width - base.size.width) / 2,
+                y: (rect.height - base.size.height) / 2,
+                width: base.size.width, height: base.size.height))
+            return true
+        }
+        rotated.isTemplate = true
+        return rotated
     }
 
     @objc private func launchAtLoginToggled() {
