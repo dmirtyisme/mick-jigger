@@ -77,6 +77,8 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
 
     private let launchAtLoginSwitch = NSSwitch()
 
+    private var root: NSStackView!
+
     init(controller: JigglerControlling, settings: SettingsStore) {
         self.controller = controller
         self.settings = settings
@@ -89,7 +91,7 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
     // MARK: - View construction
 
     override func loadView() {
-        let root = NSStackView()
+        root = NSStackView()
         root.orientation = .vertical
         root.alignment = .leading
         root.spacing = 10
@@ -481,7 +483,7 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
 
     private func updatePreferredSize() {
         view.layoutSubtreeIfNeeded()
-        preferredContentSize = view.fittingSize
+        preferredContentSize = NSSize(width: Self.contentWidth, height: root.fittingSize.height)
     }
 
     private static func statusBadge(for state: JigglerState) -> NSAttributedString {
