@@ -37,6 +37,7 @@ final class ActivityWindowController: NSWindowController {
     private let contentStack = NSStackView()
     private var refreshTimer: Timer?
     private var trailView: TrailView?
+    private var mainScrollView: NSScrollView?
     private var shouldAnimateNextRefresh = false
     private var personalRecordRows: [(label: String, value: String, symbol: String)] = []
 
@@ -116,6 +117,7 @@ final class ActivityWindowController: NSWindowController {
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
+        mainScrollView = scroll
         let docView = NSView()
         docView.translatesAutoresizingMaskIntoConstraints = false
         contentStack.translatesAutoresizingMaskIntoConstraints = false
@@ -272,6 +274,12 @@ final class ActivityWindowController: NSWindowController {
         case 2: buildMonthTab()
         case 3: buildAllTimeTab()
         default: buildTrailTab()
+        }
+        // Reset scroll position to top after content is laid out.
+        DispatchQueue.main.async { [weak self] in
+            guard let scrollView = self?.mainScrollView else { return }
+            scrollView.contentView.scroll(to: .zero)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
         }
     }
 
@@ -681,12 +689,14 @@ final class ActivityWindowController: NSWindowController {
             tagLabel.textColor = .tertiaryLabelColor
             tagLabel.widthAnchor.constraint(equalToConstant: 58).isActive = true
 
-            let indicator = NSLevelIndicator()
-            indicator.levelIndicatorStyle = .continuousCapacity
+            let indicator = NSProgressIndicator()
+            indicator.isIndeterminate = false
+            indicator.style = .bar
             indicator.minValue = 0
             indicator.maxValue = 1
             indicator.doubleValue = value / maxValue
             indicator.setContentHuggingPriority(.init(1), for: .horizontal)
+            indicator.heightAnchor.constraint(equalToConstant: 8).isActive = true
 
             let valueLabel = NSTextField(labelWithString: text)
             valueLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
