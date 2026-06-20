@@ -220,11 +220,6 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         marginsContainer.isHidden = true
         root.addArrangedSubview(marginsContainer)
 
-        let hotkeyHint = NSTextField(labelWithString: "⌥⌘J  Toggle · ⌥⌘M  Auto-start")
-        hotkeyHint.font = .systemFont(ofSize: 11)
-        hotkeyHint.textColor = .tertiaryLabelColor
-        root.addArrangedSubview(hotkeyHint)
-
         root.addArrangedSubview(separator())
 
         // Activity tracking: today's quick stats + window button.
@@ -252,6 +247,13 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         let launchRow = row(launchLabel, spacer(), launchAtLoginSwitch)
         root.addArrangedSubview(launchRow)
 
+        // Hotkey hint — centered above Quit.
+        let hotkeyHint = NSTextField(labelWithString: "⌥⌘J  Toggle  ·  ⌥⌘M  Auto-start")
+        hotkeyHint.font = .systemFont(ofSize: 11)
+        hotkeyHint.textColor = .tertiaryLabelColor
+        hotkeyHint.alignment = .center
+        root.addArrangedSubview(hotkeyHint)
+
         // Quit.
         let quitButton = NSButton(title: "Quit Mick Jigger", target: self, action: #selector(quit))
         quitButton.bezelStyle = .inline
@@ -263,7 +265,7 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
                      randomRow, distanceControl, clickRow, clickIntervalRow,
                      scrollRow, interactionWarningLabel, autoStartRow,
                      thresholdRow, marginsHeaderButton, marginsContainer,
-                     activityRow, launchRow] {
+                     activityRow, launchRow, hotkeyHint] {
             item.widthAnchor.constraint(
                 equalTo: root.widthAnchor, constant: -28).isActive = true
         }

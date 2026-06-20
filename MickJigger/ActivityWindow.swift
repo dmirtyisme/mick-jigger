@@ -41,6 +41,7 @@ final class ActivityWindowController: NSWindowController {
     private var shouldAnimateNextRefresh = false
     private var personalRecordRows: [(label: String, value: String, symbol: String)] = []
     private var showTrailDetails = true
+    private var buildTarget: NSStackView!
 
     init(service: ActivityService) {
         self.service = service
@@ -269,6 +270,7 @@ final class ActivityWindowController: NSWindowController {
             $0.removeFromSuperview()
         }
         trailView = nil
+        buildTarget = contentStack
         switch tabs.selectedSegment {
         case 0: buildTodayTab()
         case 1: buildPeriodTab(days: 7, title: "Last 7 days")
@@ -276,10 +278,9 @@ final class ActivityWindowController: NSWindowController {
         case 3: buildAllTimeTab()
         default: buildTrailTab()
         }
-        // Reset scroll position to top after content is laid out.
-        DispatchQueue.main.async { [weak self] in
-            guard let scrollView = self?.mainScrollView else { return }
-            scrollView.contentView.scroll(to: .zero)
+        // Reset scroll position synchronously so there's no flash of prior offset.
+        if let scrollView = mainScrollView {
+            scrollView.contentView.bounds.origin = .zero
             scrollView.reflectScrolledClipView(scrollView.contentView)
         }
     }
@@ -349,18 +350,18 @@ final class ActivityWindowController: NSWindowController {
         addTimelineCard(bins: stats.hourBins, caption: caption.joined(separator: "  ·  "))
 
         addSeparator()
-        addBreakdown(
-            realClicks: stats.clicks, realScrolls: stats.scrolls, realDistance: stats.distancePx,
-            synClicks: stats.synClicks, synScrolls: stats.synScrolls,
-            synDistance: stats.synDistancePx, synMoves: stats.synEvents)
+        addDisclosureSection("Real vs Synthetic") {
+            addBreakdown(
+                realClicks: stats.clicks, realScrolls: stats.scrolls, realDistance: stats.distancePx,
+                synClicks: stats.synClicks, synScrolls: stats.synScrolls,
+                synDistance: stats.synDistancePx, synMoves: stats.synEvents)
+        }
 
         let insights = service.insightsToday()
         if !insights.isEmpty {
             addSeparator()
-            addSection("Insights")
-            let symbols = ["sparkles", "chart.line.uptrend.xyaxis", "clock", "flame"]
-            for (index, line) in insights.enumerated() {
-                addCallout(line, symbol: symbols[index % symbols.count])
+            addDisclosureSection("Insights") {
+                addInsightsBox(insights)
             }
         }
     }
@@ -381,11 +382,18 @@ final class ActivityWindowController: NSWindowController {
             ("Longest Session",   ActivityService.formatDuration(stats.longestSessionSeconds)),
         ])
         addSeparator()
-        addBreakdown(
-            realClicks: stats.clicks, realScrolls: stats.scrolls, realDistance: stats.distancePx,
-            synClicks: stats.synClicks, synScrolls: stats.synScrolls,
-            synDistance: stats.synDistancePx, synMoves: stats.synEvents)
-        addPerDayList(stats.perDay)
+        addDisclosureSection("Real vs Synthetic") {
+            addBreakdown(
+                realClicks: stats.clicks, realScrolls: stats.scrolls, realDistance: stats.distancePx,
+                synClicks: stats.synClicks, synScrolls: stats.synScrolls,
+                synDistance: stats.synDistancePx, synMoves: stats.synEvents)
+        }
+        if !stats.perDay.isEmpty {
+            addSeparator()
+            addDisclosureSection("By Day") {
+                addPerDayList(stats.perDay)
+            }
+        }
     }
 
     // MARK: - Month
@@ -403,15 +411,16 @@ final class ActivityWindowController: NSWindowController {
         let prevClicks   = previous.reduce(0)   { $0 + $1.realClicks }
         let current = service.periodStats(lastDays: 30)
         addSeparator()
-        addSection("Trends (vs previous 30 days)")
-        addCallout(
-            Self.trendLine("Distance", current: current.distancePx, previous: prevDistance),
-            symbol: current.distancePx >= prevDistance
-                ? "chart.line.uptrend.xyaxis" : "chart.line.downtrend.xyaxis")
-        addCallout(
-            Self.trendLine("Clicks", current: Double(current.clicks), previous: Double(prevClicks)),
-            symbol: Double(current.clicks) >= Double(prevClicks)
-                ? "chart.line.uptrend.xyaxis" : "chart.line.downtrend.xyaxis")
+        addDisclosureSection("Trends (vs previous 30 days)") {
+            addCallout(
+                Self.trendLine("Distance", current: current.distancePx, previous: prevDistance),
+                symbol: current.distancePx >= prevDistance
+                    ? "chart.line.uptrend.xyaxis" : "chart.line.downtrend.xyaxis")
+            addCallout(
+                Self.trendLine("Clicks", current: Double(current.clicks), previous: Double(prevClicks)),
+                symbol: Double(current.clicks) >= Double(prevClicks)
+                    ? "chart.line.uptrend.xyaxis" : "chart.line.downtrend.xyaxis")
+        }
     }
 
     private static func trendLine(_ name: String, current: Double, previous: Double) -> String {
@@ -437,13 +446,14 @@ final class ActivityWindowController: NSWindowController {
             ("Avg Activity Score","\(stats.avgScore) / 100"),
         ])
         addSeparator()
-        addBreakdown(
-            realClicks: stats.clicks, realScrolls: stats.scrolls, realDistance: stats.distancePx,
-            synClicks: stats.synClicks, synScrolls: stats.synScrolls,
-            synDistance: stats.synDistancePx, synMoves: stats.synEvents)
+        addDisclosureSection("Real vs Synthetic") {
+            addBreakdown(
+                realClicks: stats.clicks, realScrolls: stats.scrolls, realDistance: stats.distancePx,
+                synClicks: stats.synClicks, synScrolls: stats.synScrolls,
+                synDistance: stats.synDistancePx, synMoves: stats.synEvents)
+        }
 
         addSeparator()
-        addSection("Personal Records")
         let records = service.personalRecords()
         personalRecordRows = []
         if let best = records.maxDistanceDay {
@@ -476,7 +486,9 @@ final class ActivityWindowController: NSWindowController {
                 "They'll appear as activity accumulates.",
                 "hourglass"))
         }
-        addPersonalRecordsTable()
+        addDisclosureSection("Personal Records") {
+            addPersonalRecordsTable()
+        }
     }
 
     // MARK: - Trail
@@ -535,45 +547,37 @@ final class ActivityWindowController: NSWindowController {
         picker.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
     }
 
-    /// Generates the trail share-card PNG at native screen resolution.
-    /// When showTrailDetails is ON: trail + Swiss-grid data panel.
-    /// When OFF: trail + subtle watermark.
+    /// Generates the trail share-card PNG.
+    /// Layout: max 600pt wide, trail fills top, 8pt gap, 72pt panel at bottom.
     private func shareCardData() -> Data? {
         guard let tv = trailView else { return nil }
 
         let scale = NSScreen.main?.backingScaleFactor ?? 2.0
-        let trailW = tv.bounds.width
-        let trailH = tv.bounds.height
-        let panelPts: CGFloat = showTrailDetails ? 80.0 : 0.0
-        let totalH = trailH + panelPts
+        let cardW: CGFloat = min(600, tv.bounds.width)
+        let trailH = tv.bounds.height  // preserve view height
+        let panelPts: CGFloat = showTrailDetails ? 72.0 : 0.0
+        let gapPts: CGFloat = showTrailDetails ? 8.0 : 0.0
+        let totalH = trailH + gapPts + panelPts
 
-        // Render trail at Retina resolution.
-        guard let trailRep = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: Int(trailW * scale), pixelsHigh: Int(trailH * scale),
-            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
-            isPlanar: false, colorSpaceName: .calibratedRGB,
-            bitmapFormat: [], bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
-        trailRep.size = tv.bounds.size
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: trailRep)
-        NSGraphicsContext.current?.cgContext.scaleBy(x: scale, y: scale)
-        tv.draw(tv.bounds)
-        NSGraphicsContext.restoreGraphicsState()
-        guard let trailCG = trailRep.cgImage else { return nil }
+        // Render trail at card width via offscreen path (layer-backed views can't
+        // use tv.draw() into a manually set NSGraphicsContext).
+        guard let trailPNG = tv.pngData(canvasSize: CGSize(width: cardW, height: trailH)),
+              let trailRep = NSBitmapImageRep(data: trailPNG),
+              let trailCG = trailRep.cgImage else { return nil }
 
-        // Composite into final CGContext (Y=0 at bottom, AppKit style).
-        let pixW = Int(trailW * scale)
+        // Composite into final CGContext (Y=0 at bottom in CG coordinates).
+        let pixW = Int(cardW * scale)
         let pixH = Int(totalH * scale)
         let panelPx = Int(panelPts * scale)
+        let gapPx  = Int(gapPts * scale)
         guard let ctx = CGContext(
             data: nil, width: pixW, height: pixH,
             bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
 
-        // Trail occupies the top portion (y = panelPx..pixH in CG coordinates).
-        ctx.draw(trailCG, in: CGRect(x: 0, y: panelPx, width: pixW, height: pixH - panelPx))
+        // Trail occupies the top (y = panelPx+gapPx..pixH in CG coordinates).
+        ctx.draw(trailCG, in: CGRect(x: 0, y: panelPx + gapPx, width: pixW, height: pixH - panelPx - gapPx))
 
         if showTrailDetails {
             drawSharePanel(ctx: ctx, width: pixW, height: panelPx, scale: scale)
@@ -601,9 +605,13 @@ final class ActivityWindowController: NSWindowController {
     }
 
     private func drawSharePanel(ctx: CGContext, width: Int, height: Int, scale: CGFloat) {
-        // Background.
+        // Background with 8pt corner radius.
+        let cornerR = 8.0 * scale
+        let panelRect = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
+        let panelPath = CGPath(roundedRect: panelRect, cornerWidth: cornerR, cornerHeight: cornerR, transform: nil)
         ctx.setFillColor(NSColor.black.withAlphaComponent(0.95).cgColor)
-        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        ctx.addPath(panelPath)
+        ctx.fillPath()
 
         // Top border 0.5px white 40%.
         let borderH = max(1, Int(0.5 * scale))
@@ -676,19 +684,79 @@ final class ActivityWindowController: NSWindowController {
         NSGraphicsContext.restoreGraphicsState()
     }
 
+    // MARK: - Disclosure accordion
+
+    /// Adds a disclosure header to contentStack and a collapsible container.
+    /// The build closure adds views into the container via buildTarget.
+    private func addDisclosureSection(_ title: String, expanded: Bool = true, build: () -> Void) {
+        let btn = NSButton()
+        btn.title = " \(title)"
+        btn.font = .systemFont(ofSize: 13, weight: .semibold)
+        btn.image = Self.disclosureChevron(expanded: expanded)
+        btn.imagePosition = .imageLeading
+        btn.alignment = .left
+        btn.isBordered = false
+        btn.setButtonType(.momentaryChange)
+        btn.contentTintColor = .labelColor
+        contentStack.addArrangedSubview(btn)
+        btn.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+
+        let container = NSStackView()
+        container.orientation = .vertical
+        container.alignment = .leading
+        container.spacing = Self.cardGap
+        container.isHidden = !expanded
+        contentStack.addArrangedSubview(container)
+        container.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+
+        let savedTarget = buildTarget
+        buildTarget = container
+        build()
+        buildTarget = savedTarget
+
+        // Wire toggle: capture btn and container weakly via a closure stored as the action.
+        let toggle = DisclosureToggle(button: btn, container: container)
+        btn.target = toggle
+        btn.action = #selector(DisclosureToggle.toggle)
+        objc_setAssociatedObject(btn, &disclosureToggleKey, toggle, .OBJC_ASSOCIATION_RETAIN)
+    }
+
+    private static func disclosureChevron(expanded: Bool) -> NSImage? {
+        let cfg = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        guard let base = NSImage(systemSymbolName: "chevron.right",
+                                  accessibilityDescription: nil)?
+            .withSymbolConfiguration(cfg) else { return nil }
+        guard expanded else { return base }
+        let sz = NSSize(width: max(base.size.width, base.size.height),
+                        height: max(base.size.width, base.size.height))
+        let rotated = NSImage(size: sz, flipped: false) { rect in
+            let t = NSAffineTransform()
+            t.translateX(by: rect.width / 2, yBy: rect.height / 2)
+            t.rotate(byDegrees: -90)
+            t.translateX(by: -rect.width / 2, yBy: -rect.height / 2)
+            t.concat()
+            base.draw(in: NSRect(x: (rect.width - base.size.width) / 2,
+                                 y: (rect.height - base.size.height) / 2,
+                                 width: base.size.width, height: base.size.height))
+            return true
+        }
+        rotated.isTemplate = true
+        return rotated
+    }
+
     // MARK: - Section builders
 
     private func addSection(_ title: String) {
         let label = NSTextField(labelWithString: title)
         label.font = .systemFont(ofSize: 13, weight: .semibold)
         label.textColor = .labelColor
-        contentStack.addArrangedSubview(label)
+        buildTarget.addArrangedSubview(label)
     }
 
     private func addSeparator() {
         let box = NSBox()
         box.boxType = .separator
-        contentStack.addArrangedSubview(box)
+        buildTarget.addArrangedSubview(box)
         box.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
     }
 
@@ -696,7 +764,7 @@ final class ActivityWindowController: NSWindowController {
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = .systemFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
-        contentStack.addArrangedSubview(label)
+        buildTarget.addArrangedSubview(label)
         label.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
     }
 
@@ -781,7 +849,7 @@ final class ActivityWindowController: NSWindowController {
             stack.addArrangedSubview(label)
         }
         let cardView = card(stack)
-        contentStack.addArrangedSubview(cardView)
+        buildTarget.addArrangedSubview(cardView)
         cardView.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
     }
 
@@ -791,7 +859,6 @@ final class ActivityWindowController: NSWindowController {
         realClicks: Int, realScrolls: Int, realDistance: Double,
         synClicks: Int, synScrolls: Int, synDistance: Double, synMoves: Int
     ) {
-        addSection("Real vs Synthetic")
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -821,7 +888,7 @@ final class ActivityWindowController: NSWindowController {
                 equalToConstant: Self.contentWidth - 2 * Self.cardPadding).isActive = true
         }
         let cardView = card(stack)
-        contentStack.addArrangedSubview(cardView)
+        buildTarget.addArrangedSubview(cardView)
         cardView.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
     }
 
@@ -875,6 +942,97 @@ final class ActivityWindowController: NSWindowController {
         return block
     }
 
+    // MARK: - Insights box
+
+    private func addInsightsBox(_ insights: [String]) {
+        let stats = service.todaySnapshot()
+        let avgSpeed = stats.activeSeconds > 0
+            ? stats.distancePx / stats.activeSeconds : 0
+        let rows: [(String, String)] = [
+            ("Activity Score",   "\(stats.score) / 100"),
+            ("Active Time",      ActivityService.formatDuration(stats.activeSeconds)),
+            ("Cursor Distance",  ActivityService.formatDistance(px: stats.distancePx)),
+            ("Clicks",           ActivityService.formatCount(stats.clicks)),
+            ("Scrolls",          ActivityService.formatCount(stats.scrolls)),
+            ("Avg Speed",        String(format: "%.0f px/s", avgSpeed)),
+        ].filter { _ in true }
+
+        let rowHeight: CGFloat = 36
+        let separatorH: CGFloat = 0.5
+        let innerWidth = Self.contentWidth - 2 * Self.cardPadding
+
+        let container = NSStackView()
+        container.orientation = .vertical
+        container.alignment = .leading
+        container.spacing = 0
+
+        for (i, row) in rows.enumerated() {
+            let rowView = NSView()
+            rowView.translatesAutoresizingMaskIntoConstraints = false
+            rowView.heightAnchor.constraint(equalToConstant: rowHeight).isActive = true
+            rowView.widthAnchor.constraint(equalToConstant: innerWidth).isActive = true
+
+            let nameLabel = NSTextField(labelWithString: row.0)
+            nameLabel.font = .systemFont(ofSize: 13)
+            nameLabel.textColor = .labelColor
+            nameLabel.translatesAutoresizingMaskIntoConstraints = false
+
+            let valueLabel = NSTextField(labelWithString: row.1)
+            valueLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+            valueLabel.textColor = .systemBlue
+            valueLabel.alignment = .right
+            valueLabel.translatesAutoresizingMaskIntoConstraints = false
+
+            rowView.addSubview(nameLabel)
+            rowView.addSubview(valueLabel)
+            NSLayoutConstraint.activate([
+                nameLabel.leadingAnchor.constraint(equalTo: rowView.leadingAnchor),
+                nameLabel.centerYAnchor.constraint(equalTo: rowView.centerYAnchor),
+                valueLabel.trailingAnchor.constraint(equalTo: rowView.trailingAnchor),
+                valueLabel.centerYAnchor.constraint(equalTo: rowView.centerYAnchor),
+                nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: valueLabel.leadingAnchor, constant: -8),
+            ])
+            container.addArrangedSubview(rowView)
+
+            if i < rows.count - 1 {
+                let sep = NSBox()
+                sep.boxType = .custom
+                sep.fillColor = NSColor.separatorColor
+                sep.borderWidth = 0
+                sep.translatesAutoresizingMaskIntoConstraints = false
+                sep.heightAnchor.constraint(equalToConstant: separatorH).isActive = true
+                sep.widthAnchor.constraint(equalToConstant: innerWidth).isActive = true
+                container.addArrangedSubview(sep)
+            }
+        }
+
+        let box = NSBox()
+        box.boxType = .custom
+        box.fillColor = NSColor.windowBackgroundColor.withAlphaComponent(0.6)
+        box.cornerRadius = 10
+        box.borderWidth = 0
+        box.contentViewMargins = NSSize(width: 0, height: 0)
+        box.translatesAutoresizingMaskIntoConstraints = false
+        container.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(container)
+        NSLayoutConstraint.activate([
+            container.topAnchor.constraint(equalTo: box.topAnchor, constant: Self.cardPadding),
+            container.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -Self.cardPadding),
+            container.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: Self.cardPadding),
+            container.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -Self.cardPadding),
+        ])
+        buildTarget.addArrangedSubview(box)
+        box.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+
+        if !insights.isEmpty {
+            let insightLabel = NSTextField(wrappingLabelWithString: insights.joined(separator: "\n"))
+            insightLabel.font = .systemFont(ofSize: 11)
+            insightLabel.textColor = .secondaryLabelColor
+            buildTarget.addArrangedSubview(insightLabel)
+            insightLabel.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+        }
+    }
+
     // MARK: - Callout rows
 
     private func addCallout(_ text: String, symbol: String) {
@@ -894,7 +1052,7 @@ final class ActivityWindowController: NSWindowController {
         rowStack.spacing = 10
 
         let cardView = card(rowStack, padding: 12)
-        contentStack.addArrangedSubview(cardView)
+        buildTarget.addArrangedSubview(cardView)
         cardView.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
     }
 
@@ -930,7 +1088,7 @@ final class ActivityWindowController: NSWindowController {
             equalToConstant: CGFloat(personalRecordRows.count) * 44).isActive = true
 
         let cardView = card(scrollView, padding: 0)
-        contentStack.addArrangedSubview(cardView)
+        buildTarget.addArrangedSubview(cardView)
         cardView.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
     }
 
@@ -940,8 +1098,6 @@ final class ActivityWindowController: NSWindowController {
         _ perDay: [(day: String, distancePx: Double, clicks: Int, activeSeconds: Double, score: Int)]
     ) {
         guard !perDay.isEmpty else { return }
-        addSeparator()
-        addSection("By Day")
         for entry in perDay {
             addCaption("\(Self.dayString(entry.day)) — "
                 + "\(ActivityService.formatDistance(px: entry.distancePx)) · "
@@ -1025,6 +1181,58 @@ extension ActivityWindowController: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { 44 }
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
+}
+
+// MARK: - Disclosure toggle helper
+
+/// Retained via objc_setAssociatedObject on the button — keeps the animation
+/// target alive without making it a stored property on the window controller.
+private var disclosureToggleKey: UInt8 = 0
+
+private final class DisclosureToggle: NSObject {
+    private weak var button: NSButton?
+    private weak var container: NSView?
+    private var expanded: Bool
+
+    init(button: NSButton, container: NSView) {
+        self.button = button
+        self.container = container
+        self.expanded = !container.isHidden
+    }
+
+    @objc func toggle() {
+        guard let button, let container else { return }
+        expanded.toggle()
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.2
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            container.animator().isHidden = !expanded
+        }
+        // Rotate chevron: right=collapsed (0°), down=expanded (-90°).
+        let cfg = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        guard let base = NSImage(systemSymbolName: "chevron.right",
+                                  accessibilityDescription: nil)?
+            .withSymbolConfiguration(cfg) else { return }
+        if expanded {
+            let sz = NSSize(width: max(base.size.width, base.size.height),
+                            height: max(base.size.width, base.size.height))
+            let rotated = NSImage(size: sz, flipped: false) { rect in
+                let t = NSAffineTransform()
+                t.translateX(by: rect.width / 2, yBy: rect.height / 2)
+                t.rotate(byDegrees: -90)
+                t.translateX(by: -rect.width / 2, yBy: -rect.height / 2)
+                t.concat()
+                base.draw(in: NSRect(x: (rect.width - base.size.width) / 2,
+                                     y: (rect.height - base.size.height) / 2,
+                                     width: base.size.width, height: base.size.height))
+                return true
+            }
+            rotated.isTemplate = true
+            button.image = rotated
+        } else {
+            button.image = base
+        }
+    }
 }
 
 // MARK: - TrailView
@@ -1120,20 +1328,73 @@ private final class TrailView: NSView {
             y: (bounds.height - size.height) / 2))
     }
 
-    func pngData() -> Data? {
-        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+    /// Renders the trail offscreen. Cannot call draw(bounds) — wantsLayer=true
+    /// routes screen drawing through CALayer and ignores NSGraphicsContext.current.
+    ///
+    /// canvasSize: nil → full screen resolution (NSScreen.main.frame.size).
+    ///             Provide a size to render at a specific point-size canvas.
+    func pngData(canvasSize: CGSize? = nil) -> Data? {
+        let screen = NSScreen.main ?? NSScreen.screens.first
+        let screenScale = screen?.backingScaleFactor ?? 2.0
+        let canvas = canvasSize ?? screen?.frame.size ?? CGSize(width: 1920, height: 1080)
+        let w = canvas.width, h = canvas.height
+
         guard let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil,
-            pixelsWide: Int(bounds.width * scale),
-            pixelsHigh: Int(bounds.height * scale),
+            pixelsWide: Int(w * screenScale), pixelsHigh: Int(h * screenScale),
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
             isPlanar: false, colorSpaceName: .calibratedRGB,
             bitmapFormat: [], bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
-        rep.size = bounds.size
+        rep.size = canvas
+
         NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-        NSGraphicsContext.current?.cgContext.scaleBy(x: scale, y: scale)
-        draw(bounds)
+        guard let gc = NSGraphicsContext(bitmapImageRep: rep) else {
+            NSGraphicsContext.restoreGraphicsState()
+            return nil
+        }
+        NSGraphicsContext.current = gc
+        gc.cgContext.scaleBy(x: screenScale, y: screenScale)
+
+        // Background.
+        Self.background.setFill()
+        NSRect(x: 0, y: 0, width: w, height: h).fill()
+
+        if points.count >= 3 {
+            let union = NSScreen.screens.map(\.frame).reduce(CGRect.null) { $0.union($1) }
+            let desktop = union.isNull
+                ? CGRect(x: 0, y: 0, width: 1920, height: 1080)
+                : CGRect(x: union.minX, y: 0, width: union.width, height: union.height)
+            let inset: CGFloat = canvasSize == nil ? 40 : 14
+            let mapScale = min((w - 2 * inset) / desktop.width,
+                               (h - 2 * inset) / desktop.height)
+            let offset = CGPoint(x: (w - desktop.width  * mapScale) / 2,
+                                 y: (h - desktop.height * mapScale) / 2)
+
+            func map(_ p: TrailPoint) -> CGPoint {
+                CGPoint(x: offset.x + (p.x - desktop.minX) * mapScale,
+                        y: offset.y + (desktop.maxY - p.y) * mapScale)
+            }
+
+            for i in 1..<(points.count - 1) {
+                let a = points[i-1], b = points[i], c = points[i+1]
+                if b.time - a.time > Self.gapSeconds || c.time - b.time > Self.gapSeconds { continue }
+                let pa = map(a), pb = map(b), pc = map(c)
+                let from = CGPoint(x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2)
+                let to   = CGPoint(x: (pb.x + pc.x) / 2, y: (pb.y + pc.y) / 2)
+                let path = NSBezierPath()
+                path.move(to: from)
+                path.curve(to: to,
+                    controlPoint1: CGPoint(x: from.x + 2/3 * (pb.x - from.x),
+                                           y: from.y + 2/3 * (pb.y - from.y)),
+                    controlPoint2: CGPoint(x: to.x + 2/3 * (pb.x - to.x),
+                                           y: to.y + 2/3 * (pb.y - to.y)))
+                path.lineWidth = Self.width(forSpeed: b.speed)
+                path.lineCapStyle = .round
+                Self.color(forSpeed: b.speed).setStroke()
+                path.stroke()
+            }
+        }
+
         NSGraphicsContext.restoreGraphicsState()
         return rep.representation(using: .png, properties: [:])
     }
