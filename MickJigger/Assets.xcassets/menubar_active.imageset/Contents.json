@@ -1,9 +1,14 @@
 {
   "images": [
     {
-      "filename": "menubar_active.pdf",
+      "filename": "menubar_active@1x.png",
       "idiom": "universal",
       "scale": "1x"
+    },
+    {
+      "filename": "menubar_active@2x.png",
+      "idiom": "universal",
+      "scale": "2x"
     }
   ],
   "info": {
@@ -11,7 +16,6 @@
     "version": 1
   },
   "properties": {
-    "rendering-intent": "template",
-    "preserves-vector-representation": true
+    "rendering-intent": "template"
   }
 }

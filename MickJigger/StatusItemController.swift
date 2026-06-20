@@ -4,8 +4,8 @@ import AppKit
 /// Left click → toggle (handled by the coordinator); right click → popover.
 final class StatusItemController: NSObject, NSPopoverDelegate {
 
-    /// Fired on left mouse up over the status item.
-    var onLeftClick: (() -> Void)?
+    /// Fired on right mouse up — toggle active ↔ inactive.
+    var onRightClick: (() -> Void)?
 
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
@@ -33,9 +33,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     @objc private func handleClick(_ sender: Any?) {
         guard let event = NSApp.currentEvent else { return }
         if event.type == .rightMouseUp {
-            togglePopover()
+            onRightClick?()
         } else {
-            onLeftClick?()
+            togglePopover()
         }
     }
 

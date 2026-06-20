@@ -220,6 +220,11 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         marginsContainer.isHidden = true
         root.addArrangedSubview(marginsContainer)
 
+        let hotkeyHint = NSTextField(labelWithString: "⌥⌘J  Toggle · ⌥⌘M  Auto-start")
+        hotkeyHint.font = .systemFont(ofSize: 11)
+        hotkeyHint.textColor = .tertiaryLabelColor
+        root.addArrangedSubview(hotkeyHint)
+
         root.addArrangedSubview(separator())
 
         // Activity tracking: today's quick stats + window button.

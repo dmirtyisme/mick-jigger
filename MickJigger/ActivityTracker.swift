@@ -151,6 +151,7 @@ final class ActivityService {
         var lastActivity: Date?
         var hourBins = [Int](repeating: 0, count: 24)
         var score = 0
+        var sessionCount = 0
         var firstInput: Date?
         var lastSessionEnd: Date?
     }
@@ -191,6 +192,7 @@ final class ActivityService {
 
         // Sessions: closed sessions overlapping today, clipped to today.
         let sessions = store.sessions(from: startOfDay, to: now)
+        stats.sessionCount = sessions.count
         for session in sessions {
             let clippedStart = max(session.start, startOfDay)
             stats.activeSeconds += session.end.timeIntervalSince(clippedStart)
@@ -206,6 +208,7 @@ final class ActivityService {
             stats.longestSessionSeconds = max(stats.longestSessionSeconds, max(0, liveDuration))
             stats.firstInput = min(stats.firstInput ?? .distantFuture, clippedStart)
             stats.lastSessionEnd = nil  // day hasn't "ended" — session still running
+            stats.sessionCount += 1  // open session counts
         }
 
         stats.idleSeconds = max(0, now.timeIntervalSince(startOfDay) - stats.activeSeconds)

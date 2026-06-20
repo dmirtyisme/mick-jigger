@@ -6,8 +6,13 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		1A0000000000000000000012 /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000000011 /* Carbon.framework */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		1A0000000000000000000004 /* MickJigger.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MickJigger.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1A0000000000000000000011 /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -36,6 +41,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1A0000000000000000000012 /* Carbon.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -47,6 +53,7 @@
 			children = (
 				1A0000000000000000000005 /* MickJigger */,
 				1A0000000000000000000003 /* Products */,
+				1A0000000000000000000011 /* Carbon.framework */,
 			);
 			sourceTree = "<group>";
 		};

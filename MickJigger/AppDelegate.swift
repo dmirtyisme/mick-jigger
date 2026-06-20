@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, JigglerControlling {
     private lazy var engine = JigglerEngine(settings: settings)
     private let pollingLoop = PollingLoop()
     private var statusItemController: StatusItemController!
+    private let hotkeyManager = HotkeyManager()
 
     private(set) var state: JigglerState = .inactive
     private(set) var permissionWarningVisible = false
@@ -27,7 +28,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, JigglerControlling {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItemController = StatusItemController(controller: self, settings: settings)
-        statusItemController.onLeftClick = { [weak self] in self?.handleLeftClick() }
+        statusItemController.onRightClick = { [weak self] in self?.handleRightClick() }
+
+        hotkeyManager.onToggle = { [weak self] in self?.handleRightClick() }
+        hotkeyManager.onToggleMonitor = { [weak self] in self?.handleHotkeyMonitor() }
+        hotkeyManager.register()
 
         pollingLoop.onTick = { [weak self] idle in self?.handlePollTick(idle: idle) }
 
@@ -86,7 +91,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, JigglerControlling {
         NotificationCenter.default.post(name: .jigglerStateDidChange, object: self)
     }
 
-    // MARK: - Left click (PRODUCT_SPEC click behavior table)
+    // MARK: - Click / hotkey handlers
+
+    /// Right click + ⌥⌘J: toggle active ↔ inactive.
+    private func handleRightClick() {
+        if state.isActive {
+            requestDeactivate()
+        } else {
+            requestActivateManual()
+        }
+    }
+
+    /// ⌥⌘M: toggle monitoring on/off.
+    private func handleHotkeyMonitor() {
+        autoStartToggled(state != .monitoring)
+    }
 
     private func handleLeftClick() {
         switch state {

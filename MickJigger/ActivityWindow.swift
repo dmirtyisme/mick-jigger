@@ -40,6 +40,7 @@ final class ActivityWindowController: NSWindowController {
     private var mainScrollView: NSScrollView?
     private var shouldAnimateNextRefresh = false
     private var personalRecordRows: [(label: String, value: String, symbol: String)] = []
+    private var showTrailDetails = true
 
     init(service: ActivityService) {
         self.service = service
@@ -493,6 +494,12 @@ final class ActivityWindowController: NSWindowController {
               + "(not synthetic) cursor positions and resets at midnight."
             : "\(ActivityService.formatCount(points.count)) samples · real cursor "
               + "movement only · resets at midnight")
+
+        let detailsToggle = NSButton(checkboxWithTitle: "Show details",
+                                     target: self, action: #selector(trailDetailsToggled(_:)))
+        detailsToggle.state = showTrailDetails ? .on : .off
+        contentStack.addArrangedSubview(detailsToggle)
+
         let saveButton = NSButton(
             title: "Save as PNG…", target: self, action: #selector(saveTrailPNG))
         saveButton.bezelStyle = .rounded
@@ -505,11 +512,15 @@ final class ActivityWindowController: NSWindowController {
         contentStack.addArrangedSubview(buttonRow)
     }
 
+    @objc private func trailDetailsToggled(_ sender: NSButton) {
+        showTrailDetails = sender.state == .on
+    }
+
     @objc private func saveTrailPNG() {
-        guard let window, let data = trailView?.pngData() else { return }
+        guard let window, let data = shareCardData() else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
-        panel.nameFieldStringValue = "MickJigger-Trail-\(ActivityStore.dayKey(Date())).png"
+        panel.nameFieldStringValue = "mickjigger-trail-\(ActivityStore.dayKey(Date())).png"
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
             do { try data.write(to: url) } catch {
@@ -519,9 +530,150 @@ final class ActivityWindowController: NSWindowController {
     }
 
     @objc private func shareTrailPNG(_ sender: NSButton) {
-        guard let data = trailView?.pngData(), let image = NSImage(data: data) else { return }
+        guard let data = shareCardData(), let image = NSImage(data: data) else { return }
         let picker = NSSharingServicePicker(items: [image])
         picker.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+    }
+
+    /// Generates the trail share-card PNG at native screen resolution.
+    /// When showTrailDetails is ON: trail + Swiss-grid data panel.
+    /// When OFF: trail + subtle watermark.
+    private func shareCardData() -> Data? {
+        guard let tv = trailView else { return nil }
+
+        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+        let trailW = tv.bounds.width
+        let trailH = tv.bounds.height
+        let panelPts: CGFloat = showTrailDetails ? 80.0 : 0.0
+        let totalH = trailH + panelPts
+
+        // Render trail at Retina resolution.
+        guard let trailRep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(trailW * scale), pixelsHigh: Int(trailH * scale),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+            isPlanar: false, colorSpaceName: .calibratedRGB,
+            bitmapFormat: [], bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        trailRep.size = tv.bounds.size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: trailRep)
+        NSGraphicsContext.current?.cgContext.scaleBy(x: scale, y: scale)
+        tv.draw(tv.bounds)
+        NSGraphicsContext.restoreGraphicsState()
+        guard let trailCG = trailRep.cgImage else { return nil }
+
+        // Composite into final CGContext (Y=0 at bottom, AppKit style).
+        let pixW = Int(trailW * scale)
+        let pixH = Int(totalH * scale)
+        let panelPx = Int(panelPts * scale)
+        guard let ctx = CGContext(
+            data: nil, width: pixW, height: pixH,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+
+        // Trail occupies the top portion (y = panelPx..pixH in CG coordinates).
+        ctx.draw(trailCG, in: CGRect(x: 0, y: panelPx, width: pixW, height: pixH - panelPx))
+
+        if showTrailDetails {
+            drawSharePanel(ctx: ctx, width: pixW, height: panelPx, scale: scale)
+        } else {
+            drawShareWatermark(ctx: ctx, width: pixW, height: pixH, scale: scale)
+        }
+
+        guard let finalCG = ctx.makeImage() else { return nil }
+        return NSBitmapImageRep(cgImage: finalCG).representation(using: .png, properties: [:])
+    }
+
+    private func drawShareWatermark(ctx: CGContext, width: Int, height: Int, scale: CGFloat) {
+        let text = "mickjigger.app"
+        let font = NSFont.monospacedSystemFont(ofSize: 8.0 * scale, weight: .regular)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white.withAlphaComponent(0.2)
+        ]
+        let str = NSAttributedString(string: text, attributes: attrs)
+        let sz = str.size()
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+        str.draw(at: NSPoint(x: CGFloat(width) - sz.width - 10 * scale, y: 8 * scale))
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    private func drawSharePanel(ctx: CGContext, width: Int, height: Int, scale: CGFloat) {
+        // Background.
+        ctx.setFillColor(NSColor.black.withAlphaComponent(0.95).cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+
+        // Top border 0.5px white 40%.
+        let borderH = max(1, Int(0.5 * scale))
+        ctx.setFillColor(NSColor.white.withAlphaComponent(0.4).cgColor)
+        ctx.fill(CGRect(x: 0, y: height - borderH, width: width, height: borderH))
+
+        // Column dividers.
+        let divW = max(1, Int(0.5 * scale))
+        let col1 = width / 3
+        let col2 = width * 2 / 3
+        ctx.fill(CGRect(x: col1, y: 0, width: divW, height: height))
+        ctx.fill(CGRect(x: col2, y: 0, width: divW, height: height))
+
+        // Today's stats.
+        let stats = ActivityService.shared.todaySnapshot()
+        let dateStr: String = {
+            let f = DateFormatter(); f.dateFormat = "dd.MM.yyyy"; return f.string(from: Date())
+        }()
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+
+        // Column content helper.
+        func drawColumn(x: CGFloat, w: CGFloat, label: String, value: String, rowLabel: String) {
+            let topPad = CGFloat(height) - 18 * scale
+            // Row 1 label (9pt uppercase, 50% white).
+            let lbl1 = NSAttributedString(string: label.uppercased(), attributes: [
+                .font: NSFont.systemFont(ofSize: 9 * scale),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.5)
+            ])
+            lbl1.draw(at: NSPoint(x: x + 8 * scale, y: topPad))
+
+            // Row 2 value (SF Mono 18pt semibold, 100% white).
+            let val = NSAttributedString(string: value, attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 18 * scale, weight: .semibold),
+                .foregroundColor: NSColor.white
+            ])
+            val.draw(at: NSPoint(x: x + 8 * scale, y: CGFloat(height) * 0.38))
+
+            // Row 2 sublabel (8pt uppercase, 40% white).
+            let lbl2 = NSAttributedString(string: rowLabel.uppercased(), attributes: [
+                .font: NSFont.systemFont(ofSize: 8 * scale),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.4)
+            ])
+            lbl2.draw(at: NSPoint(x: x + 8 * scale, y: CGFloat(height) * 0.19))
+        }
+
+        drawColumn(x: 0, w: CGFloat(col1),
+                   label: "Mick Jigger",
+                   value: ActivityService.formatDistance(px: stats.distancePx),
+                   rowLabel: "Cursor")
+        drawColumn(x: CGFloat(col1 + divW), w: CGFloat(col2 - col1 - divW),
+                   label: dateStr,
+                   value: ActivityService.formatCount(stats.clicks),
+                   rowLabel: "Clicks")
+        drawColumn(x: CGFloat(col2 + divW), w: CGFloat(width - col2 - divW),
+                   label: "Today",
+                   value: ActivityService.formatDuration(stats.activeSeconds),
+                   rowLabel: "Active Time")
+
+        // Footer (full width, 9pt, 30% white).
+        let footer = "Score \(stats.score)/100 · \(stats.sessionCount) sessions · mickjigger.app"
+        let footerStr = NSAttributedString(string: footer, attributes: [
+            .font: NSFont.systemFont(ofSize: 9 * scale),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.3)
+        ])
+        let fsz = footerStr.size()
+        footerStr.draw(at: NSPoint(x: (CGFloat(width) - fsz.width) / 2, y: 6 * scale))
+
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     // MARK: - Section builders
@@ -969,8 +1121,20 @@ private final class TrailView: NSView {
     }
 
     func pngData() -> Data? {
-        guard let rep = bitmapImageRepForCachingDisplay(in: bounds) else { return nil }
-        cacheDisplay(in: bounds, to: rep)
+        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(bounds.width * scale),
+            pixelsHigh: Int(bounds.height * scale),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+            isPlanar: false, colorSpaceName: .calibratedRGB,
+            bitmapFormat: [], bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        rep.size = bounds.size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSGraphicsContext.current?.cgContext.scaleBy(x: scale, y: scale)
+        draw(bounds)
+        NSGraphicsContext.restoreGraphicsState()
         return rep.representation(using: .png, properties: [:])
     }
 }
