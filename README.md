@@ -1,44 +1,35 @@
 # Mick Jigger
 
-A native macOS menu bar utility that keeps your screen active by periodically moving the cursor — preventing idle state, screensavers, screen lock, and "away" status in Slack, Teams, and Zoom.
+macOS menu bar utility that keeps your Mac awake and tracks how you actually use your computer.
 
-## What it does
-
-One click in the menu bar starts jiggling. The cursor makes a small movement on a configurable interval and returns to its original position. The app pauses automatically while you're actively using the machine.
-
-**Activity Tracking** records real input (clicks, scrolls, cursor distance, active time) independently of the jiggler — giving you an honest picture of your actual usage.
+![App Icon](assets/icon.png)
 
 ## Features
 
-- Menu bar toggle — active/inactive in one click
-- Configurable jiggle interval and movement distance
-- Safe area margins to keep the cursor away from screen edges and system UI
-- Auto-start after a configurable idle threshold
-- Optional click and scroll simulation (opt-in, off by default)
-- Activity Tracking with daily, weekly, monthly, and all-time views
-- Personal records and activity trail
-- Launch at login
-- Universal binary (Apple Silicon + Intel)
+**Anti-idle**
+- Keeps Mac active and status online in Slack, Teams, Zoom
+- Auto-starts when idle, auto-stops when you return
+- Optional click and scroll simulation
+- Safe area margins — never touches system UI
+
+**Activity Analytics**
+- Cursor distance in kilometers
+- Clicks, scrolls, double-clicks, active time
+- Automatic session detection
+- Real vs Synthetic activity breakdown
+- Activity Score — daily index of your activity
+- Personal records and insights
+
+**Cursor Trail**
+- Visual map of cursor movement for the day
+- Unique pattern for every working day
+- Export and share as PNG with stats overlay
 
 ## Requirements
-
 - macOS 13 Ventura or later
-- Accessibility permission (for cursor movement)
-- Input Monitoring permission (for Activity Tracking, optional)
+- Apple Silicon or Intel
 
-## Install
+## Download
+[MickJigger-v1.0.dmg](MickJigger-v1.0.dmg)
 
-Download `MickJigger-v1.0.dmg`, open it, drag Mick Jigger to Applications.
-
-## Project layout
-
-```
-MickJigger/          Swift source
-knowledge/           Product docs and specs
-assets/              Icons and images
-bot/                 Telegram bot (future)
-```
-
-## Status
-
-Early release. Working title — the final name will be decided before any public App Store listing.
+## mickjigger.app
