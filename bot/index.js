@@ -90,3 +90,19 @@ process.once('SIGTERM', () => {
 });
 
 console.log('Mick Jigger bot is running');
+
+// Set bot commands menu
+bot.setMyCommands([
+  { command: 'idea', description: 'Зберегти ідею' },
+  { command: 'ideas', description: 'Показати всі ідеї' },
+  { command: 'rank', description: 'Ранжувати по важливості' },
+  { command: 'summary', description: 'Резюме за сьогодні' },
+  { command: 'analyze', description: 'Аналіз ідеї /analyze 5' },
+  { command: 'filter', description: 'Фільтр /filter feature' },
+  { command: 'status', description: 'Статус /status 3 accepted' },
+  { command: 'export', description: 'Експорт всіх ідей' },
+  { command: 'help', description: 'Список команд' }
+]);
+
+// Set bot description
+bot.setMyDescription('Mick Jigger idea bot — збирає та аналізує ідеї для продукту через Claude AI');
