@@ -32,3 +32,10 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+
+# Bot
+bot/.env
+bot/node_modules/
+bot/data/*.db
+bot/data/*.db-shm
+bot/data/*.db-wal

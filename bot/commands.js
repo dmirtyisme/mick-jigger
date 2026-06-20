@@ -1,0 +1,354 @@
+const db = require('./db');
+const { rankIdeas, summarizeIdeas, analyzeIdea } = require('./claude');
+
+const VALID_CATEGORIES = ['feature', 'bug', 'ux', 'marketing', 'other'];
+const VALID_STATUSES = ['accepted', 'rejected', 'reviewed', 'new'];
+
+// Emoji triggers that auto-save as ideas
+const IDEA_EMOJI_TRIGGERS = ['💡', '🔥', '🚀', '💭', '✨', '🎯', '📝'];
+
+function isAllowedChat(chatId) {
+  const allowed = process.env.ALLOWED_CHAT_ID;
+  if (!allowed) return true;
+  return String(chatId) === String(allowed);
+}
+
+function guessCategory(text) {
+  const lower = text.toLowerCase();
+  if (/bug|crash|fix|broken|error|fail/.test(lower)) return 'bug';
+  if (/ui|ux|design|layout|look|feel|icon|color|font/.test(lower)) return 'ux';
+  if (/market|promot|launch|user|grow|viral|share|review/.test(lower)) return 'marketing';
+  if (/feature|add|support|allow|enable|option/.test(lower)) return 'feature';
+  return 'other';
+}
+
+function formatIdea(idea) {
+  const statusIcon = { new: '🆕', reviewed: '👀', accepted: '✅', rejected: '❌' }[idea.status] || '•';
+  const priority = idea.priority ? ` P${idea.priority}` : '';
+  const score = idea.score ? ` S${idea.score}` : '';
+  return `${statusIcon} [${idea.id}]${priority}${score} ${idea.text}\n   _by ${idea.author}_`;
+}
+
+function groupByCategory(ideas) {
+  const groups = {};
+  for (const idea of ideas) {
+    if (!groups[idea.category]) groups[idea.category] = [];
+    groups[idea.category].push(idea);
+  }
+  return groups;
+}
+
+function formatGroupedIdeas(ideas) {
+  if (ideas.length === 0) return 'No ideas found.';
+
+  const groups = groupByCategory(ideas);
+  const categoryEmoji = {
+    feature: '🚀 Feature',
+    bug: '🐛 Bug',
+    ux: '🎨 UX',
+    marketing: '📣 Marketing',
+    other: '💬 Other',
+  };
+
+  return Object.entries(groups)
+    .map(([cat, items]) => {
+      const label = categoryEmoji[cat] || cat;
+      const lines = items.map(formatIdea).join('\n');
+      return `*${label}* (${items.length})\n${lines}`;
+    })
+    .join('\n\n');
+}
+
+async function handleIdea(bot, msg, text) {
+  if (!isAllowedChat(msg.chat.id)) return;
+
+  const ideaText = text.trim();
+  if (!ideaText) {
+    return bot.sendMessage(msg.chat.id, 'Usage: /idea [text] — describe your idea');
+  }
+
+  const category = guessCategory(ideaText);
+  const result = db.insertIdea.run({
+    text: ideaText,
+    author: msg.from.first_name + (msg.from.last_name ? ` ${msg.from.last_name}` : ''),
+    author_id: msg.from.id,
+    chat_id: msg.chat.id,
+    category,
+  });
+
+  bot.sendMessage(
+    msg.chat.id,
+    `✅ Idea #${result.lastInsertRowid} saved \\[${category}\\]\n_${ideaText}_`,
+    { parse_mode: 'MarkdownV2' }
+  );
+}
+
+async function handleIdeas(bot, msg) {
+  if (!isAllowedChat(msg.chat.id)) return;
+
+  const ideas = db.getAllIdeas.all();
+  if (ideas.length === 0) {
+    return bot.sendMessage(msg.chat.id, 'No ideas yet. Use /idea to add one.');
+  }
+
+  const text = `*All Ideas* (${ideas.length} total)\n\n${formatGroupedIdeas(ideas)}`;
+  bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
+}
+
+async function handleRank(bot, msg) {
+  if (!isAllowedChat(msg.chat.id)) return;
+
+  const ideas = db.getUnrankedIdeas.all();
+  if (ideas.length === 0) {
+    return bot.sendMessage(msg.chat.id, 'No unranked ideas. All ideas already have priorities.');
+  }
+
+  const thinking = await bot.sendMessage(msg.chat.id, `⏳ Ranking ${ideas.length} ideas with Claude...`);
+
+  try {
+    const result = await rankIdeas(ideas);
+
+    // Parse ranking lines: [id] priority:X score:Y category:Z — justification
+    const lines = result.split('\n').filter(l => l.match(/^\[(\d+)\]/));
+    let updated = 0;
+
+    for (const line of lines) {
+      const idMatch = line.match(/^\[(\d+)\]/);
+      const priorityMatch = line.match(/priority:(\d+)/i);
+      const scoreMatch = line.match(/score:(\d+)/i);
+      const categoryMatch = line.match(/category:(\w+)/i);
+
+      if (!idMatch) continue;
+      const id = parseInt(idMatch[1]);
+      const priority = priorityMatch ? parseInt(priorityMatch[1]) : null;
+      const score = scoreMatch ? parseInt(scoreMatch[1]) : null;
+      const category = categoryMatch && VALID_CATEGORIES.includes(categoryMatch[1].toLowerCase())
+        ? categoryMatch[1].toLowerCase()
+        : null;
+
+      const idea = db.getIdeaById.get(id);
+      if (idea && (priority || score)) {
+        db.updateIdeaRank.run(priority, score, category || idea.category, id);
+        updated++;
+      }
+    }
+
+    const ranked = `*Claude's Ranking:*\n\n${result}\n\n_${updated} ideas updated in DB._`;
+    await bot.editMessageText(ranked, {
+      chat_id: msg.chat.id,
+      message_id: thinking.message_id,
+      parse_mode: 'Markdown',
+    });
+  } catch (err) {
+    console.error('Rank error:', err);
+    bot.editMessageText(`❌ Ranking failed: ${err.message}`, {
+      chat_id: msg.chat.id,
+      message_id: thinking.message_id,
+    });
+  }
+}
+
+async function handleSummary(bot, msg) {
+  if (!isAllowedChat(msg.chat.id)) return;
+
+  const ideas = db.getTodayIdeas.all();
+  if (ideas.length === 0) {
+    return bot.sendMessage(msg.chat.id, 'No ideas submitted today.');
+  }
+
+  const thinking = await bot.sendMessage(msg.chat.id, `⏳ Summarizing ${ideas.length} ideas from today...`);
+
+  try {
+    const summary = await summarizeIdeas(ideas, 'today');
+
+    db.insertSummary.run({ content: summary, period: 'today' });
+
+    await bot.editMessageText(`*Today's Summary:*\n\n${summary}`, {
+      chat_id: msg.chat.id,
+      message_id: thinking.message_id,
+      parse_mode: 'Markdown',
+    });
+  } catch (err) {
+    console.error('Summary error:', err);
+    bot.editMessageText(`❌ Summary failed: ${err.message}`, {
+      chat_id: msg.chat.id,
+      message_id: thinking.message_id,
+    });
+  }
+}
+
+async function handleAnalyze(bot, msg, args) {
+  if (!isAllowedChat(msg.chat.id)) return;
+
+  const id = parseInt(args.trim());
+  if (!id || isNaN(id)) {
+    return bot.sendMessage(msg.chat.id, 'Usage: /analyze [id] — e.g. /analyze 5');
+  }
+
+  const idea = db.getIdeaById.get(id);
+  if (!idea) {
+    return bot.sendMessage(msg.chat.id, `❌ Idea #${id} not found.`);
+  }
+
+  const thinking = await bot.sendMessage(msg.chat.id, `⏳ Analyzing idea #${id}...`);
+
+  try {
+    const analysis = await analyzeIdea(idea);
+
+    await bot.editMessageText(`*Analysis of Idea #${id}*\n\n${analysis}`, {
+      chat_id: msg.chat.id,
+      message_id: thinking.message_id,
+      parse_mode: 'Markdown',
+    });
+  } catch (err) {
+    console.error('Analyze error:', err);
+    bot.editMessageText(`❌ Analysis failed: ${err.message}`, {
+      chat_id: msg.chat.id,
+      message_id: thinking.message_id,
+    });
+  }
+}
+
+async function handleFilter(bot, msg, args) {
+  if (!isAllowedChat(msg.chat.id)) return;
+
+  const category = args.trim().toLowerCase();
+  if (!VALID_CATEGORIES.includes(category)) {
+    return bot.sendMessage(
+      msg.chat.id,
+      `Usage: /filter [category]\nValid categories: ${VALID_CATEGORIES.join(', ')}`
+    );
+  }
+
+  const ideas = db.getIdeasByCategory.all(category);
+  if (ideas.length === 0) {
+    return bot.sendMessage(msg.chat.id, `No ideas in category: ${category}`);
+  }
+
+  const lines = ideas.map(formatIdea).join('\n');
+  bot.sendMessage(msg.chat.id, `*${category}* (${ideas.length})\n\n${lines}`, {
+    parse_mode: 'Markdown',
+  });
+}
+
+async function handleStatus(bot, msg, args) {
+  if (!isAllowedChat(msg.chat.id)) return;
+
+  const parts = args.trim().split(/\s+/);
+  const id = parseInt(parts[0]);
+  const status = parts[1]?.toLowerCase();
+
+  if (!id || !status || !VALID_STATUSES.includes(status)) {
+    return bot.sendMessage(
+      msg.chat.id,
+      `Usage: /status [id] [${VALID_STATUSES.join('|')}]\nExample: /status 3 accepted`
+    );
+  }
+
+  const idea = db.getIdeaById.get(id);
+  if (!idea) {
+    return bot.sendMessage(msg.chat.id, `❌ Idea #${id} not found.`);
+  }
+
+  db.updateIdeaStatus.run(status, id);
+
+  const icon = { accepted: '✅', rejected: '❌', reviewed: '👀', new: '🆕' }[status];
+  bot.sendMessage(msg.chat.id, `${icon} Idea #${id} marked as *${status}*\n_${idea.text}_`, {
+    parse_mode: 'Markdown',
+  });
+}
+
+async function handleExport(bot, msg) {
+  if (!isAllowedChat(msg.chat.id)) return;
+
+  const ideas = db.getAllIdeas.all();
+  if (ideas.length === 0) {
+    return bot.sendMessage(msg.chat.id, 'No ideas to export.');
+  }
+
+  const lines = [
+    `Mick Jigger — Product Ideas Export`,
+    `Generated: ${new Date().toISOString()}`,
+    `Total: ${ideas.length} ideas`,
+    '',
+    '---',
+    '',
+  ];
+
+  const groups = groupByCategory(ideas);
+  for (const [cat, items] of Object.entries(groups)) {
+    lines.push(`## ${cat.toUpperCase()} (${items.length})`);
+    for (const i of items) {
+      lines.push(`[${i.id}] [P${i.priority || '-'}] [${i.status}] ${i.text}`);
+      lines.push(`   by ${i.author} on ${i.created_at.split(' ')[0]}`);
+      lines.push('');
+    }
+  }
+
+  const exportText = lines.join('\n');
+
+  if (exportText.length < 4000) {
+    bot.sendMessage(msg.chat.id, `\`\`\`\n${exportText}\n\`\`\``, { parse_mode: 'Markdown' });
+  } else {
+    // Send as file for large exports
+    const buffer = Buffer.from(exportText, 'utf8');
+    bot.sendDocument(msg.chat.id, buffer, {}, {
+      filename: `mick-jigger-ideas-${new Date().toISOString().split('T')[0]}.txt`,
+      contentType: 'text/plain',
+    });
+  }
+}
+
+async function handleHelp(bot, msg) {
+  if (!isAllowedChat(msg.chat.id)) return;
+
+  const help = `*Mick Jigger Idea Bot*
+
+*Add ideas:*
+/idea [text] — save an idea
+💡 [text] — auto-save (any message starting with idea emoji)
+
+*Browse:*
+/ideas — all ideas grouped by category
+/filter [category] — filter by: feature, bug, ux, marketing, other
+
+*AI-powered:*
+/rank — Claude ranks all unranked ideas
+/summary — Claude summarizes today's ideas
+/analyze [id] — deep analysis of specific idea
+
+*Manage:*
+/status [id] [accepted|rejected|reviewed|new] — update status
+/export — all ideas as text
+
+/help — this message`;
+
+  bot.sendMessage(msg.chat.id, help, { parse_mode: 'Markdown' });
+}
+
+async function handleMessage(bot, msg) {
+  if (!isAllowedChat(msg.chat.id)) return;
+  if (!msg.text) return;
+
+  const startsWithIdeaEmoji = IDEA_EMOJI_TRIGGERS.some(e => msg.text.startsWith(e));
+  if (!startsWithIdeaEmoji) return;
+
+  // Strip the leading emoji and any whitespace
+  const text = msg.text.replace(/^[\u{1F300}-\u{1FFFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]+\s*/u, '').trim();
+  if (!text) return;
+
+  await handleIdea(bot, msg, text);
+}
+
+module.exports = {
+  handleIdea,
+  handleIdeas,
+  handleRank,
+  handleSummary,
+  handleAnalyze,
+  handleFilter,
+  handleStatus,
+  handleExport,
+  handleHelp,
+  handleMessage,
+};
