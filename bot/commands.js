@@ -39,7 +39,7 @@ function groupByCategory(ideas) {
 }
 
 function formatGroupedIdeas(ideas) {
-  if (ideas.length === 0) return 'No ideas found.';
+  if (ideas.length === 0) return 'Ідей не знайдено.';
 
   const groups = groupByCategory(ideas);
   const categoryEmoji = {
@@ -64,7 +64,7 @@ async function handleIdea(bot, msg, text) {
 
   const ideaText = text.trim();
   if (!ideaText) {
-    return bot.sendMessage(msg.chat.id, 'Usage: /idea [text] — describe your idea');
+    return bot.sendMessage(msg.chat.id, 'Використання: /idea [текст] — опиши свою ідею');
   }
 
   const category = guessCategory(ideaText);
@@ -78,7 +78,7 @@ async function handleIdea(bot, msg, text) {
 
   bot.sendMessage(
     msg.chat.id,
-    `✅ Idea #${result.lastInsertRowid} saved \\[${category}\\]\n_${ideaText}_`,
+    `✅ Ідея #${result.lastInsertRowid} збережена \\[${category}\\]\n_${ideaText}_`,
     { parse_mode: 'MarkdownV2' }
   );
 }
@@ -88,10 +88,10 @@ async function handleIdeas(bot, msg) {
 
   const ideas = db.getAllIdeas.all();
   if (ideas.length === 0) {
-    return bot.sendMessage(msg.chat.id, 'No ideas yet. Use /idea to add one.');
+    return bot.sendMessage(msg.chat.id, 'Ідей ще немає. Додай першу через /idea.');
   }
 
-  const text = `*All Ideas* (${ideas.length} total)\n\n${formatGroupedIdeas(ideas)}`;
+  const text = `*Всі ідеї* (${ideas.length})\n\n${formatGroupedIdeas(ideas)}`;
   bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
 }
 
@@ -100,10 +100,10 @@ async function handleRank(bot, msg) {
 
   const ideas = db.getUnrankedIdeas.all();
   if (ideas.length === 0) {
-    return bot.sendMessage(msg.chat.id, 'No unranked ideas. All ideas already have priorities.');
+    return bot.sendMessage(msg.chat.id, 'Всі ідеї вже мають пріоритети.');
   }
 
-  const thinking = await bot.sendMessage(msg.chat.id, `⏳ Ranking ${ideas.length} ideas with Claude...`);
+  const thinking = await bot.sendMessage(msg.chat.id, `⏳ Claude ранжує ${ideas.length} ідей...`);
 
   try {
     const result = await rankIdeas(ideas);
@@ -133,7 +133,7 @@ async function handleRank(bot, msg) {
       }
     }
 
-    const ranked = `*Claude's Ranking:*\n\n${result}\n\n_${updated} ideas updated in DB._`;
+    const ranked = `*Ранжування від Claude:*\n\n${result}\n\n_Оновлено ${updated} ідей._`;
     await bot.editMessageText(ranked, {
       chat_id: msg.chat.id,
       message_id: thinking.message_id,
@@ -141,7 +141,7 @@ async function handleRank(bot, msg) {
     });
   } catch (err) {
     console.error('Rank error:', err);
-    bot.editMessageText(`❌ Ranking failed: ${err.message}`, {
+    bot.editMessageText(`❌ Помилка ранжування: ${err.message}`, {
       chat_id: msg.chat.id,
       message_id: thinking.message_id,
     });
@@ -153,24 +153,24 @@ async function handleSummary(bot, msg) {
 
   const ideas = db.getTodayIdeas.all();
   if (ideas.length === 0) {
-    return bot.sendMessage(msg.chat.id, 'No ideas submitted today.');
+    return bot.sendMessage(msg.chat.id, 'Сьогодні ідей ще не було.');
   }
 
-  const thinking = await bot.sendMessage(msg.chat.id, `⏳ Summarizing ${ideas.length} ideas from today...`);
+  const thinking = await bot.sendMessage(msg.chat.id, `⏳ Claude готує резюме за ${ideas.length} ідеями...`);
 
   try {
     const summary = await summarizeIdeas(ideas, 'today');
 
     db.insertSummary.run({ content: summary, period: 'today' });
 
-    await bot.editMessageText(`*Today's Summary:*\n\n${summary}`, {
+    await bot.editMessageText(`*Резюме за сьогодні:*\n\n${summary}`, {
       chat_id: msg.chat.id,
       message_id: thinking.message_id,
       parse_mode: 'Markdown',
     });
   } catch (err) {
     console.error('Summary error:', err);
-    bot.editMessageText(`❌ Summary failed: ${err.message}`, {
+    bot.editMessageText(`❌ Помилка резюме: ${err.message}`, {
       chat_id: msg.chat.id,
       message_id: thinking.message_id,
     });
@@ -182,27 +182,27 @@ async function handleAnalyze(bot, msg, args) {
 
   const id = parseInt(args.trim());
   if (!id || isNaN(id)) {
-    return bot.sendMessage(msg.chat.id, 'Usage: /analyze [id] — e.g. /analyze 5');
+    return bot.sendMessage(msg.chat.id, 'Використання: /analyze [id] — наприклад /analyze 5');
   }
 
   const idea = db.getIdeaById.get(id);
   if (!idea) {
-    return bot.sendMessage(msg.chat.id, `❌ Idea #${id} not found.`);
+    return bot.sendMessage(msg.chat.id, `❌ Ідею #${id} не знайдено.`);
   }
 
-  const thinking = await bot.sendMessage(msg.chat.id, `⏳ Analyzing idea #${id}...`);
+  const thinking = await bot.sendMessage(msg.chat.id, `⏳ Claude аналізує ідею #${id}...`);
 
   try {
     const analysis = await analyzeIdea(idea);
 
-    await bot.editMessageText(`*Analysis of Idea #${id}*\n\n${analysis}`, {
+    await bot.editMessageText(`*Аналіз ідеї #${id}*\n\n${analysis}`, {
       chat_id: msg.chat.id,
       message_id: thinking.message_id,
       parse_mode: 'Markdown',
     });
   } catch (err) {
     console.error('Analyze error:', err);
-    bot.editMessageText(`❌ Analysis failed: ${err.message}`, {
+    bot.editMessageText(`❌ Помилка аналізу: ${err.message}`, {
       chat_id: msg.chat.id,
       message_id: thinking.message_id,
     });
@@ -216,13 +216,13 @@ async function handleFilter(bot, msg, args) {
   if (!VALID_CATEGORIES.includes(category)) {
     return bot.sendMessage(
       msg.chat.id,
-      `Usage: /filter [category]\nValid categories: ${VALID_CATEGORIES.join(', ')}`
+      `Використання: /filter [категорія]\nДоступні категорії: ${VALID_CATEGORIES.join(', ')}`
     );
   }
 
   const ideas = db.getIdeasByCategory.all(category);
   if (ideas.length === 0) {
-    return bot.sendMessage(msg.chat.id, `No ideas in category: ${category}`);
+    return bot.sendMessage(msg.chat.id, `Ідей у категорії "${category}" немає.`);
   }
 
   const lines = ideas.map(formatIdea).join('\n');
@@ -241,19 +241,19 @@ async function handleStatus(bot, msg, args) {
   if (!id || !status || !VALID_STATUSES.includes(status)) {
     return bot.sendMessage(
       msg.chat.id,
-      `Usage: /status [id] [${VALID_STATUSES.join('|')}]\nExample: /status 3 accepted`
+      `Використання: /status [id] [${VALID_STATUSES.join('|')}]\nПриклад: /status 3 accepted`
     );
   }
 
   const idea = db.getIdeaById.get(id);
   if (!idea) {
-    return bot.sendMessage(msg.chat.id, `❌ Idea #${id} not found.`);
+    return bot.sendMessage(msg.chat.id, `❌ Ідею #${id} не знайдено.`);
   }
 
   db.updateIdeaStatus.run(status, id);
 
   const icon = { accepted: '✅', rejected: '❌', reviewed: '👀', new: '🆕' }[status];
-  bot.sendMessage(msg.chat.id, `${icon} Idea #${id} marked as *${status}*\n_${idea.text}_`, {
+  bot.sendMessage(msg.chat.id, `${icon} Ідея #${id} — статус *${status}*\n_${idea.text}_`, {
     parse_mode: 'Markdown',
   });
 }
@@ -263,13 +263,13 @@ async function handleExport(bot, msg) {
 
   const ideas = db.getAllIdeas.all();
   if (ideas.length === 0) {
-    return bot.sendMessage(msg.chat.id, 'No ideas to export.');
+    return bot.sendMessage(msg.chat.id, 'Немає ідей для експорту.');
   }
 
   const lines = [
-    `Mick Jigger — Product Ideas Export`,
-    `Generated: ${new Date().toISOString()}`,
-    `Total: ${ideas.length} ideas`,
+    `Mick Jigger — Експорт ідей`,
+    `Дата: ${new Date().toISOString()}`,
+    `Всього: ${ideas.length} ідей`,
     '',
     '---',
     '',
@@ -280,7 +280,7 @@ async function handleExport(bot, msg) {
     lines.push(`## ${cat.toUpperCase()} (${items.length})`);
     for (const i of items) {
       lines.push(`[${i.id}] [P${i.priority || '-'}] [${i.status}] ${i.text}`);
-      lines.push(`   by ${i.author} on ${i.created_at.split(' ')[0]}`);
+      lines.push(`   від ${i.author}, ${i.created_at.split(' ')[0]}`);
       lines.push('');
     }
   }
@@ -304,24 +304,24 @@ async function handleHelp(bot, msg) {
 
   const help = `*Mick Jigger Idea Bot*
 
-*Add ideas:*
-/idea [text] — save an idea
-💡 [text] — auto-save (any message starting with idea emoji)
+*Додати ідею:*
+/idea [текст] — зберегти ідею
+💡 [текст] — автозбереження (повідомлення з emoji-ідеї)
 
-*Browse:*
-/ideas — all ideas grouped by category
-/filter [category] — filter by: feature, bug, ux, marketing, other
+*Перегляд:*
+/ideas — всі ідеї по категоріях
+/filter [категорія] — фільтр: feature, bug, ux, marketing, other
 
-*AI-powered:*
-/rank — Claude ranks all unranked ideas
-/summary — Claude summarizes today's ideas
-/analyze [id] — deep analysis of specific idea
+*AI-аналіз:*
+/rank — Claude ранжує ідеї за важливістю
+/summary — Claude робить резюме за сьогодні
+/analyze [id] — глибокий аналіз конкретної ідеї
 
-*Manage:*
-/status [id] [accepted|rejected|reviewed|new] — update status
-/export — all ideas as text
+*Управління:*
+/status [id] [accepted|rejected|reviewed|new] — змінити статус
+/export — всі ідеї текстом
 
-/help — this message`;
+/help — це повідомлення`;
 
   bot.sendMessage(msg.chat.id, help, { parse_mode: 'Markdown' });
 }
