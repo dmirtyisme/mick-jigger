@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="16px" height="16px" viewBox="0 0 16 16" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>Frame 4</title>
+    <defs>
+        <path d="M0,0 L16,0 L16,16 L0,16 Z" id="path-1"></path>
+    </defs>
+    <g id="Frame-4" stroke="none" fill="none" xlink:href="#path-1">
+        <use fill="#000000" fill-rule="evenodd" xlink:href="#path-1"></use>
+        <path d="M2.91474749,5.04111831 C3.79768436,3.1009451 5.80147709,2.22726707 6.96186596,2.82801703 C9.14766463,3.95963636 6.96681409,10.2767388 4.99184611,9.15885226 C3.01687812,8.04096566 8.73810186,1.47320591 12.45769,4.48833297 C16.1772781,7.50346004 11.951314,14.5452347 9.03866305,13.0662248 C6.12601212,11.5872149 9.94754616,5.28246154 14.4058894,3.55530911" id="Path-108" stroke="#FFFFFF" stroke-width="1.01562492" stroke-linecap="round" stroke-linejoin="round" transform="translate(8.6603, 7.9544) rotate(-11) translate(-8.6603, -7.9544)"></path>
+        <circle id="Oval-37" fill="#FFFFFF" fill-rule="evenodd" cx="2.18547577" cy="8.45898275" r="1"></circle>
+    </g>
+</svg>

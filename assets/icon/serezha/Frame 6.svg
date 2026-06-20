@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="64px" height="64px" viewBox="0 0 64 64" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>Frame 6</title>
+    <defs>
+        <path d="M0,0 L64,0 L64,64 L0,64 Z" id="path-1"></path>
+    </defs>
+    <g id="Frame-6" stroke="none" fill="none" xlink:href="#path-1">
+        <use fill="#000000" fill-rule="evenodd" xlink:href="#path-1"></use>
+        <path d="M11.65899,20.1644733 C15.1907374,12.4037804 23.2059084,8.90906826 27.8474639,11.3120681 C36.5906585,15.8385454 27.8672564,41.1069554 19.9673844,36.635409 C12.0675125,32.1638626 34.9524074,5.89282364 49.8307598,17.9533319 C64.7091122,30.0138401 47.8052559,58.1809387 36.1546522,52.2648991 C24.5040485,46.3488595 39.7901846,21.1298462 57.6235575,14.2212365" id="Path-108" stroke="#FFFFFF" stroke-width="4.06249967" stroke-linecap="round" stroke-linejoin="round" transform="translate(34.6413, 31.8174) rotate(-11) translate(-34.6413, -31.8174)"></path>
+        <path d="M8.62500019,36.3749998 C9.93667637,36.3749998 11,35.3116762 11,34 C11,32.6883238 9.93667637,31.6250002 8.62500019,31.6250002 C7.31332402,31.6250002 6.25000039,32.6883238 6.25000039,34 C6.25000039,35.3116762 7.31332402,36.3749998 8.62500019,36.3749998 Z" id="Oval-37" fill="#FFFFFF" fill-rule="evenodd"></path>
+    </g>
+</svg>

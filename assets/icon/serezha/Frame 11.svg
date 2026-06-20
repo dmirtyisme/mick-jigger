@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512px" height="512px" viewBox="0 0 512 512" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>Frame 11</title>
+    <defs>
+        <path d="M0,0 L512,0 L512,512 L0,512 Z" id="path-1"></path>
+    </defs>
+    <g id="Frame-11" stroke="none" fill="none" transform="translate(0.0001, 0)" xlink:href="#path-1">
+        <use fill="#0044FF" fill-rule="evenodd" xlink:href="#path-1"></use>
+        <path d="M93.2719198,161.315786 C121.525899,99.2302432 185.647267,71.2725461 222.779711,90.4965451 C292.725268,126.708364 222.938051,328.855643 159.739075,293.083272 C96.5400999,257.310901 279.619259,47.1425891 398.646079,143.626655 C517.672898,240.110721 382.442047,465.44751 289.237218,418.119193 C196.032388,370.790876 318.321477,169.038769 460.98846,113.769892" id="Path-108" stroke="#FFFFFF" stroke-width="32.4999974" stroke-linecap="round" stroke-linejoin="round" transform="translate(277.1302, 254.5393) rotate(-11) translate(-277.1302, -254.5393)"></path>
+        <path d="M69.0000031,291.000002 C79.4934109,291.000002 88.0000031,282.493409 88.0000031,272.000002 C88.0000031,261.506591 79.4934109,253.000002 69.0000031,253.000002 C58.5065921,253.000002 50.0000031,261.506591 50.0000031,272.000002 C50.0000031,282.493409 58.5065921,291.000002 69.0000031,291.000002 Z" id="Oval-37" fill="#FFFFFF" fill-rule="evenodd"></path>
+    </g>
+</svg>

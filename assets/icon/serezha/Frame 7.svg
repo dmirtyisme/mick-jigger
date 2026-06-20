@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="256px" height="256px" viewBox="0 0 256 256" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>Frame 7</title>
+    <defs>
+        <path d="M0,0 L256,0 L256,256 L0,256 Z" id="path-1"></path>
+    </defs>
+    <g id="Frame-7" stroke="none" fill="none" transform="translate(0.0001, 0)" xlink:href="#path-1">
+        <use fill="#000000" fill-rule="evenodd" xlink:href="#path-1"></use>
+        <path d="M46.6359599,80.657893 C60.7629497,49.6151216 92.8236334,35.636273 111.389855,45.2482725 C146.362634,63.3541818 111.469025,164.427822 79.8695377,146.541636 C48.27005,128.655451 139.80963,23.5712946 199.323039,71.8133276 C258.836449,120.055361 191.221024,232.723755 144.618609,209.059596 C98.016194,185.395438 159.160739,84.5193847 230.49423,56.8849458" id="Path-108" stroke="#FFFFFF" stroke-width="16.2499987" stroke-linecap="round" stroke-linejoin="round" transform="translate(138.5651, 127.2697) rotate(-11) translate(-138.5651, -127.2697)"></path>
+        <path d="M34.5000015,145.500001 C39.7467055,145.500001 44.0000015,141.246705 44.0000015,136.000001 C44.0000015,130.753295 39.7467055,126.500001 34.5000015,126.500001 C29.2532961,126.500001 25.0000015,130.753295 25.0000015,136.000001 C25.0000015,141.246705 29.2532961,145.500001 34.5000015,145.500001 Z" id="Oval-37" fill="#FFFFFF" fill-rule="evenodd"></path>
+    </g>
+</svg>
