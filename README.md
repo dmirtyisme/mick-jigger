@@ -30,6 +30,6 @@ macOS menu bar utility that keeps your Mac awake and tracks how you actually use
 - Apple Silicon or Intel
 
 ## Download
-[MickJigger-v1.0.dmg](MickJigger-v1.0.dmg)
+[MickJigger-v1.1.dmg](MickJigger-v1.1.dmg)
 
 ## mickjigger.app
