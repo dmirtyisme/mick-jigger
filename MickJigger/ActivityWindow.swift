@@ -278,9 +278,17 @@ final class ActivityWindowController: NSWindowController {
         case 3: buildAllTimeTab()
         default: buildTrailTab()
         }
-        // Reset scroll position synchronously so there's no flash of prior offset.
+        // Synchronous best-effort reset before layout.
         if let scrollView = mainScrollView {
             scrollView.contentView.bounds.origin = .zero
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+    }
+
+    private func scrollToTop() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let scrollView = self.mainScrollView else { return }
+            scrollView.contentView.scroll(to: .zero)
             scrollView.reflectScrolledClipView(scrollView.contentView)
         }
     }
@@ -364,6 +372,7 @@ final class ActivityWindowController: NSWindowController {
                 addInsightsBox(insights)
             }
         }
+        scrollToTop()
     }
 
     // MARK: - Week
@@ -394,6 +403,7 @@ final class ActivityWindowController: NSWindowController {
                 addPerDayList(stats.perDay)
             }
         }
+        scrollToTop()
     }
 
     // MARK: - Month
@@ -421,6 +431,7 @@ final class ActivityWindowController: NSWindowController {
                 symbol: Double(current.clicks) >= Double(prevClicks)
                     ? "chart.line.uptrend.xyaxis" : "chart.line.downtrend.xyaxis")
         }
+        scrollToTop()
     }
 
     private static func trendLine(_ name: String, current: Double, previous: Double) -> String {
@@ -489,6 +500,7 @@ final class ActivityWindowController: NSWindowController {
         addDisclosureSection("Personal Records") {
             addPersonalRecordsTable()
         }
+        scrollToTop()
     }
 
     // MARK: - Trail
@@ -522,6 +534,7 @@ final class ActivityWindowController: NSWindowController {
         buttonRow.orientation = .horizontal
         buttonRow.spacing = 8
         contentStack.addArrangedSubview(buttonRow)
+        scrollToTop()
     }
 
     @objc private func trailDetailsToggled(_ sender: NSButton) {
@@ -529,7 +542,7 @@ final class ActivityWindowController: NSWindowController {
     }
 
     @objc private func saveTrailPNG() {
-        guard let window, let data = shareCardData() else { return }
+        guard let window, let tv = trailView, let data = tv.pngData() else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
         panel.nameFieldStringValue = "mickjigger-trail-\(ActivityStore.dayKey(Date())).png"
@@ -559,9 +572,8 @@ final class ActivityWindowController: NSWindowController {
         let gapPts: CGFloat = showTrailDetails ? 8.0 : 0.0
         let totalH = trailH + gapPts + panelPts
 
-        // Render trail at card width via offscreen path (layer-backed views can't
-        // use tv.draw() into a manually set NSGraphicsContext).
-        guard let trailPNG = tv.pngData(canvasSize: CGSize(width: cardW, height: trailH)),
+        // Render trail at full screen resolution then scale to card width.
+        guard let trailPNG = tv.pngData(),
               let trailRep = NSBitmapImageRep(data: trailPNG),
               let trailCG = trailRep.cgImage else { return nil }
 
@@ -1328,24 +1340,26 @@ private final class TrailView: NSView {
             y: (bounds.height - size.height) / 2))
     }
 
-    /// Renders the trail offscreen. Cannot call draw(bounds) — wantsLayer=true
-    /// routes screen drawing through CALayer and ignores NSGraphicsContext.current.
-    ///
-    /// canvasSize: nil → full screen resolution (NSScreen.main.frame.size).
-    ///             Provide a size to render at a specific point-size canvas.
-    func pngData(canvasSize: CGSize? = nil) -> Data? {
+    /// Renders the trail at full screen resolution. Trail points are in screen
+    /// coordinates and are drawn 1:1 — no mapping or scaling applied to positions.
+    func pngData() -> Data? {
         let screen = NSScreen.main ?? NSScreen.screens.first
-        let screenScale = screen?.backingScaleFactor ?? 2.0
-        let canvas = canvasSize ?? screen?.frame.size ?? CGSize(width: 1920, height: 1080)
-        let w = canvas.width, h = canvas.height
+        let screenFrame = screen?.frame ?? CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let scale = screen?.backingScaleFactor ?? 2.0
+        let w = screenFrame.width
+        let h = screenFrame.height
 
         guard let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil,
-            pixelsWide: Int(w * screenScale), pixelsHigh: Int(h * screenScale),
-            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
-            isPlanar: false, colorSpaceName: .calibratedRGB,
-            bitmapFormat: [], bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
-        rep.size = canvas
+            pixelsWide: Int(w * scale),
+            pixelsHigh: Int(h * scale),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0) else { return nil }
 
         NSGraphicsContext.saveGraphicsState()
         guard let gc = NSGraphicsContext(bitmapImageRep: rep) else {
@@ -1353,32 +1367,19 @@ private final class TrailView: NSView {
             return nil
         }
         NSGraphicsContext.current = gc
-        gc.cgContext.scaleBy(x: screenScale, y: screenScale)
+        gc.cgContext.scaleBy(x: scale, y: scale)
 
-        // Background.
-        Self.background.setFill()
+        // Black background.
+        NSColor.black.setFill()
         NSRect(x: 0, y: 0, width: w, height: h).fill()
 
         if points.count >= 3 {
-            let union = NSScreen.screens.map(\.frame).reduce(CGRect.null) { $0.union($1) }
-            let desktop = union.isNull
-                ? CGRect(x: 0, y: 0, width: 1920, height: 1080)
-                : CGRect(x: union.minX, y: 0, width: union.width, height: union.height)
-            let inset: CGFloat = canvasSize == nil ? 40 : 14
-            let mapScale = min((w - 2 * inset) / desktop.width,
-                               (h - 2 * inset) / desktop.height)
-            let offset = CGPoint(x: (w - desktop.width  * mapScale) / 2,
-                                 y: (h - desktop.height * mapScale) / 2)
-
-            func map(_ p: TrailPoint) -> CGPoint {
-                CGPoint(x: offset.x + (p.x - desktop.minX) * mapScale,
-                        y: offset.y + (desktop.maxY - p.y) * mapScale)
-            }
-
             for i in 1..<(points.count - 1) {
                 let a = points[i-1], b = points[i], c = points[i+1]
                 if b.time - a.time > Self.gapSeconds || c.time - b.time > Self.gapSeconds { continue }
-                let pa = map(a), pb = map(b), pc = map(c)
+                let pa = CGPoint(x: a.x, y: a.y)
+                let pb = CGPoint(x: b.x, y: b.y)
+                let pc = CGPoint(x: c.x, y: c.y)
                 let from = CGPoint(x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2)
                 let to   = CGPoint(x: (pb.x + pc.x) / 2, y: (pb.y + pc.y) / 2)
                 let path = NSBezierPath()
