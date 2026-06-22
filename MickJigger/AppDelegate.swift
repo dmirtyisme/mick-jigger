@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, JigglerControlling {
     private let pollingLoop = PollingLoop()
     private var statusItemController: StatusItemController!
     private let hotkeyManager = HotkeyManager()
+    private lazy var aboutWindowController = AboutWindowController()
 
     private(set) var state: JigglerState = .inactive
     private(set) var permissionWarningVisible = false
@@ -50,6 +51,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, JigglerControlling {
         // Activity tracking module: silent no-op unless Input Monitoring is
         // already granted (its inline prompt lives in the Activity window).
         ActivityService.shared.start()
+
+        buildAppMenu()
+    }
+
+    private func buildAppMenu() {
+        let appMenu = NSMenu()
+        let aboutItem = NSMenuItem(
+            title: "About Mick Jigger…",
+            action: #selector(showAbout),
+            keyEquivalent: "")
+        aboutItem.target = self
+        appMenu.addItem(aboutItem)
+        appMenu.addItem(.separator())
+        let quitItem = NSMenuItem(
+            title: "Quit Mick Jigger",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q")
+        appMenu.addItem(quitItem)
+
+        let appMenuItem = NSMenuItem()
+        appMenuItem.submenu = appMenu
+        let menuBar = NSMenu()
+        menuBar.addItem(appMenuItem)
+        NSApp.mainMenu = menuBar
+    }
+
+    @objc private func showAbout() {
+        aboutWindowController.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -115,6 +115,12 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         sublineLabel.textColor = .secondaryLabelColor
         root.addArrangedSubview(sublineLabel)
 
+        // Hotkey hint — directly below the subline, before settings.
+        let hotkeyHint = NSTextField(labelWithString: "⌥⌘J  Toggle  ·  ⌥⌘M  Auto-start")
+        hotkeyHint.font = .systemFont(ofSize: 11)
+        hotkeyHint.textColor = .tertiaryLabelColor
+        root.addArrangedSubview(hotkeyHint)
+
         root.addArrangedSubview(separator())
 
         // Jiggle interval.
@@ -247,25 +253,26 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         let launchRow = row(launchLabel, spacer(), launchAtLoginSwitch)
         root.addArrangedSubview(launchRow)
 
-        // Hotkey hint — centered above Quit.
-        let hotkeyHint = NSTextField(labelWithString: "⌥⌘J  Toggle  ·  ⌥⌘M  Auto-start")
-        hotkeyHint.font = .systemFont(ofSize: 11)
-        hotkeyHint.textColor = .tertiaryLabelColor
-        hotkeyHint.alignment = .center
-        root.addArrangedSubview(hotkeyHint)
-
         // Quit.
         let quitButton = NSButton(title: "Quit Mick Jigger", target: self, action: #selector(quit))
         quitButton.bezelStyle = .inline
         quitButton.font = .systemFont(ofSize: 12)
         root.addArrangedSubview(quitButton)
 
+        // Version footer.
+        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        let versionFooter = NSTextField(labelWithString: "Mick Jigger \(ver)")
+        versionFooter.font = .systemFont(ofSize: 10)
+        versionFooter.textColor = .quaternaryLabelColor
+        versionFooter.alignment = .center
+        root.addArrangedSubview(versionFooter)
+
         // Pin widths so the stack lays out at a fixed popover width.
-        for item in [permissionBanner, header, sublineLabel, intervalControl,
-                     randomRow, distanceControl, clickRow, clickIntervalRow,
-                     scrollRow, interactionWarningLabel, autoStartRow,
-                     thresholdRow, marginsHeaderButton, marginsContainer,
-                     activityRow, launchRow, hotkeyHint] {
+        for item in [permissionBanner, header, sublineLabel, hotkeyHint,
+                     intervalControl, randomRow, distanceControl, clickRow,
+                     clickIntervalRow, scrollRow, interactionWarningLabel,
+                     autoStartRow, thresholdRow, marginsHeaderButton, marginsContainer,
+                     activityRow, launchRow, versionFooter] {
             item.widthAnchor.constraint(
                 equalTo: root.widthAnchor, constant: -28).isActive = true
         }
