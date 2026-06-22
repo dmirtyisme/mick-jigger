@@ -120,11 +120,13 @@ final class ActivityWindowController: NSWindowController {
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
         mainScrollView = scroll
-        let docView = NSView()
-        docView.translatesAutoresizingMaskIntoConstraints = false
         contentStack.translatesAutoresizingMaskIntoConstraints = false
-        docView.addSubview(contentStack)
-        scroll.documentView = docView
+        scroll.documentView = contentStack
+        NSLayoutConstraint.activate([
+            contentStack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            contentStack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
+        ])
         root.addArrangedSubview(scroll)
 
         effectView.addSubview(root)
@@ -149,12 +151,6 @@ final class ActivityWindowController: NSWindowController {
             scroll.widthAnchor.constraint(equalToConstant: Self.contentWidth),
             permissionBanner.widthAnchor.constraint(equalToConstant: Self.contentWidth),
             headerRow.widthAnchor.constraint(equalToConstant: Self.contentWidth),
-
-            docView.widthAnchor.constraint(equalTo: scroll.widthAnchor),
-            contentStack.topAnchor.constraint(equalTo: docView.topAnchor),
-            contentStack.leadingAnchor.constraint(equalTo: docView.leadingAnchor),
-            contentStack.trailingAnchor.constraint(equalTo: docView.trailingAnchor),
-            contentStack.bottomAnchor.constraint(equalTo: docView.bottomAnchor),
         ])
     }
 
@@ -278,18 +274,22 @@ final class ActivityWindowController: NSWindowController {
         case 3: buildAllTimeTab()
         default: buildTrailTab()
         }
-        // Synchronous best-effort reset before layout.
-        if let scrollView = mainScrollView {
-            scrollView.contentView.bounds.origin = .zero
-            scrollView.reflectScrolledClipView(scrollView.contentView)
+        // Sync reset (pre-layout) + async reset (post-layout) to prevent flash.
+        if let sv = mainScrollView {
+            sv.contentView.bounds.origin = .zero
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let sv = self?.mainScrollView else { return }
+            sv.documentView?.scroll(.zero)
+            sv.contentView.bounds.origin = .zero
         }
     }
 
     private func scrollToTop() {
         DispatchQueue.main.async { [weak self] in
-            guard let self, let scrollView = self.mainScrollView else { return }
-            scrollView.contentView.scroll(to: .zero)
-            scrollView.reflectScrolledClipView(scrollView.contentView)
+            guard let sv = self?.mainScrollView else { return }
+            sv.documentView?.scroll(.zero)
+            sv.contentView.bounds.origin = .zero
         }
     }
 
@@ -1360,6 +1360,7 @@ private final class TrailView: NSView {
             colorSpaceName: .deviceRGB,
             bytesPerRow: 0,
             bitsPerPixel: 0) else { return nil }
+        rep.size = NSSize(width: w, height: h)
 
         NSGraphicsContext.saveGraphicsState()
         guard let gc = NSGraphicsContext(bitmapImageRep: rep) else {
