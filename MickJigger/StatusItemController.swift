@@ -64,14 +64,14 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         guard let button = statusItem.button else { return }
         button.image = Self.icon(for: state, permissionWarning: permissionWarning)
         button.toolTip = Self.toolTip(for: state, permissionWarning: permissionWarning)
-        button.contentTintColor = nil  // let template image handle dark/light automatically
+        button.alphaValue = 1.0
         if permissionWarning {
-            button.alphaValue = 1.0
+            button.contentTintColor = .systemRed
         } else {
             switch state {
-            case .inactive:              button.alphaValue = 0.5
-            case .monitoring:            button.alphaValue = 0.7
-            case .activeManual, .activeAuto: button.alphaValue = 1.0
+            case .inactive:                  button.contentTintColor = nil
+            case .monitoring:                button.contentTintColor = .systemOrange
+            case .activeManual, .activeAuto: button.contentTintColor = .systemBlue
             }
         }
     }
