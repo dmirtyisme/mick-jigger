@@ -115,12 +115,6 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         sublineLabel.textColor = .secondaryLabelColor
         root.addArrangedSubview(sublineLabel)
 
-        // Hotkey hint — directly below the subline, before settings.
-        let hotkeyHint = NSTextField(labelWithString: "⌥⌘J  Toggle  ·  ⌥⌘M  Auto-start")
-        hotkeyHint.font = .systemFont(ofSize: 11)
-        hotkeyHint.textColor = .tertiaryLabelColor
-        root.addArrangedSubview(hotkeyHint)
-
         root.addArrangedSubview(separator())
 
         // Jiggle interval.
@@ -259,6 +253,13 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         quitButton.font = .systemFont(ofSize: 12)
         root.addArrangedSubview(quitButton)
 
+        // Hotkeys hint.
+        let hotkeyHint = NSTextField(labelWithString: "⌥⌘J  Toggle  ·  ⌥⌘M  Auto-start")
+        hotkeyHint.font = .systemFont(ofSize: 10)
+        hotkeyHint.textColor = .tertiaryLabelColor
+        hotkeyHint.alignment = .center
+        root.addArrangedSubview(hotkeyHint)
+
         // Version footer.
         let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
         let versionFooter = NSTextField(labelWithString: "Mick Jigger \(ver)")
@@ -268,11 +269,11 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         root.addArrangedSubview(versionFooter)
 
         // Pin widths so the stack lays out at a fixed popover width.
-        for item in [permissionBanner, header, sublineLabel, hotkeyHint,
+        for item in [permissionBanner, header, sublineLabel,
                      intervalControl, randomRow, distanceControl, clickRow,
                      clickIntervalRow, scrollRow, interactionWarningLabel,
                      autoStartRow, thresholdRow, marginsHeaderButton, marginsContainer,
-                     activityRow, launchRow, versionFooter] {
+                     activityRow, launchRow, hotkeyHint, versionFooter] {
             item.widthAnchor.constraint(
                 equalTo: root.widthAnchor, constant: -28).isActive = true
         }
