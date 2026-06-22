@@ -86,33 +86,31 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         }
     }
 
-    /// Returns the menu bar icon for the current state.
-    ///
-    /// All four state assets are vector template PDFs and are used in template
-    /// mode — macOS tints them for the light/dark menu bar (and the pressed
-    /// highlight) automatically. State is conveyed by the artwork itself:
-    /// outline (inactive), outline+dot (monitoring), filled (active).
-    /// The only non-template case is the permission warning, whose red badge
-    /// must stay red; its base glyph is tinted with `labelColor` at draw time
-    /// so it still adapts to both menu bar appearances.
+    /// Returns the menu bar icon. State is communicated by alphaValue, not artwork.
     private static func icon(for state: JigglerState, permissionWarning: Bool) -> NSImage {
-        let assetName: String
-        switch state {
-        case .inactive:     assetName = "menubar_inactive"
-        case .monitoring:   assetName = "menubar_monitoring"
-        case .activeManual: assetName = "menubar_active"
-        case .activeAuto:   assetName = "menubar_active_auto"
-        }
-
-        guard let base = NSImage(named: assetName) else {
-            return fallbackIcon(for: state, permissionWarning: permissionWarning)
-        }
-        base.isTemplate = true
-
+        let base = loadMenuBarIcon()
         if permissionWarning {
             return compositeWithBadge(base, color: .systemRed)
         }
         return base
+    }
+
+    /// Loads the white-on-transparent MJ glyph as a template image.
+    /// Tries the bundled PNG resource first, falls back to xcassets, then SF Symbol.
+    private static func loadMenuBarIcon() -> NSImage {
+        if let url = Bundle.main.url(forResource: "icon-menubar", withExtension: "png"),
+           let image = NSImage(contentsOf: url) {
+            image.isTemplate = true
+            return image
+        }
+        if let image = NSImage(named: "menubar_active") {
+            image.isTemplate = true
+            return image
+        }
+        let image = NSImage(systemSymbolName: "computermouse", accessibilityDescription: "Mick Jigger")
+            ?? NSImage(systemSymbolName: "cursorarrow", accessibilityDescription: "Mick Jigger")!
+        image.isTemplate = true
+        return image
     }
 
     // MARK: - Icon helpers
@@ -149,12 +147,5 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         return result
     }
 
-    /// Emergency fallback: SF Symbol, used only if the asset catalog is missing.
-    private static func fallbackIcon(for state: JigglerState, permissionWarning: Bool) -> NSImage {
-        let name = state.isActive ? "computermouse.fill" : "computermouse"
-        let image = NSImage(systemSymbolName: name, accessibilityDescription: "Mick Jigger")
-            ?? NSImage(systemSymbolName: "cursorarrow", accessibilityDescription: "Mick Jigger")!
-        image.isTemplate = !permissionWarning
-        return image
-    }
+
 }
