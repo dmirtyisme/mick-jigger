@@ -62,31 +62,46 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     func update(state: JigglerState, permissionWarning: Bool) {
         guard let button = statusItem.button else { return }
-        button.image = icon(for: state)
+        button.image = icon(for: state, permissionWarning: permissionWarning)
         button.imageScaling = .scaleProportionallyDown
+        button.contentTintColor = nil  // color is baked into the image
         button.toolTip = Self.toolTip(for: state, permissionWarning: permissionWarning)
-        button.alphaValue = 1.0
-        button.contentTintColor = permissionWarning ? .systemRed : tintColor(for: state)
     }
 
-    private func icon(for state: JigglerState) -> NSImage {
-        if let url = Bundle.main.url(forResource: "icon-menubar", withExtension: "png"),
-           let img = NSImage(contentsOf: url) {
-            img.isTemplate = true
-            img.size = NSSize(width: 18, height: 18)
-            return img
+    private func icon(for state: JigglerState, permissionWarning: Bool) -> NSImage {
+        guard let url = Bundle.main.url(forResource: "icon-menubar", withExtension: "png"),
+              let src = NSImage(contentsOf: url) else {
+            let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
+            return NSImage(systemSymbolName: "cursorarrow.motionlines", accessibilityDescription: nil)?
+                .withSymbolConfiguration(config) ?? NSImage()
         }
-        let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
-        return NSImage(systemSymbolName: "cursorarrow.motionlines", accessibilityDescription: nil)?
-            .withSymbolConfiguration(config) ?? NSImage()
-    }
+        src.size = NSSize(width: 18, height: 18)
 
-    private func tintColor(for state: JigglerState) -> NSColor? {
+        if permissionWarning {
+            return tinted(src, color: .systemRed)
+        }
         switch state {
-        case .inactive:                  return nil
-        case .monitoring:                return .systemOrange
-        case .activeManual, .activeAuto: return .systemBlue
+        case .inactive:
+            src.isTemplate = true  // macOS applies black (light) / white (dark) automatically
+            return src
+        case .monitoring:
+            return tinted(src, color: .systemOrange)
+        case .activeManual, .activeAuto:
+            return tinted(src, color: .systemBlue)
         }
+    }
+
+    // Draws the source at 18×18 and floods it with `color` using sourceAtop.
+    // Result is NOT a template image — the color is baked in.
+    private func tinted(_ source: NSImage, color: NSColor) -> NSImage {
+        let size = NSSize(width: 18, height: 18)
+        let result = NSImage(size: size)
+        result.lockFocus()
+        source.draw(in: NSRect(origin: .zero, size: size))
+        color.set()
+        NSRect(origin: .zero, size: size).fill(using: .sourceAtop)
+        result.unlockFocus()
+        return result
     }
 
     private static func toolTip(for state: JigglerState, permissionWarning: Bool) -> String {
