@@ -542,7 +542,7 @@ final class ActivityWindowController: NSWindowController {
     }
 
     @objc private func saveTrailPNG() {
-        guard let window, let tv = trailView, let data = tv.pngData() else { return }
+        guard let window, let data = shareCardData() else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
         panel.nameFieldStringValue = "mickjigger-trail-\(ActivityStore.dayKey(Date())).png"
@@ -1369,6 +1369,10 @@ private final class TrailView: NSView {
         }
         NSGraphicsContext.current = gc
         gc.cgContext.scaleBy(x: scale, y: scale)
+        // Trail points are in screen coordinates where y=0 is at the top (flipped).
+        // CG has y=0 at the bottom, so flip here once for the whole context.
+        gc.cgContext.translateBy(x: 0, y: h)
+        gc.cgContext.scaleBy(x: 1, y: -1)
 
         // Black background.
         NSColor.black.setFill()
