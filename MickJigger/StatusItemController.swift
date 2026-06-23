@@ -63,6 +63,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     func update(state: JigglerState, permissionWarning: Bool) {
         guard let button = statusItem.button else { return }
         button.image = icon(for: state)
+        button.imageScaling = .scaleProportionallyDown
         button.toolTip = Self.toolTip(for: state, permissionWarning: permissionWarning)
         button.alphaValue = 1.0
         button.contentTintColor = permissionWarning ? .systemRed : tintColor(for: state)
@@ -72,6 +73,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         if let url = Bundle.main.url(forResource: "icon-menubar", withExtension: "png"),
            let img = NSImage(contentsOf: url) {
             img.isTemplate = true
+            img.size = NSSize(width: 18, height: 18)
             return img
         }
         let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
