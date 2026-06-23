@@ -62,46 +62,26 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     func update(state: JigglerState, permissionWarning: Bool) {
         guard let button = statusItem.button else { return }
-        button.image = icon(for: state, permissionWarning: permissionWarning)
+        button.image = menuBarIcon()
         button.imageScaling = .scaleProportionallyDown
-        button.contentTintColor = nil  // color is baked into the image
+        button.contentTintColor = nil
         button.toolTip = Self.toolTip(for: state, permissionWarning: permissionWarning)
-    }
-
-    private func icon(for state: JigglerState, permissionWarning: Bool) -> NSImage {
-        guard let url = Bundle.main.url(forResource: "icon-menubar", withExtension: "png"),
-              let src = NSImage(contentsOf: url) else {
-            let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
-            return NSImage(systemSymbolName: "cursorarrow.motionlines", accessibilityDescription: nil)?
-                .withSymbolConfiguration(config) ?? NSImage()
-        }
-        src.size = NSSize(width: 18, height: 18)
-
-        if permissionWarning {
-            return tinted(src, color: .systemRed)
-        }
         switch state {
-        case .inactive:
-            src.isTemplate = true  // macOS applies black (light) / white (dark) automatically
-            return src
-        case .monitoring:
-            return tinted(src, color: .systemOrange)
-        case .activeManual, .activeAuto:
-            return tinted(src, color: .systemBlue)
+        case .inactive, .monitoring:          button.alphaValue = 0.4
+        case .activeManual, .activeAuto:      button.alphaValue = 1.0
         }
     }
 
-    // Draws the source at 18×18 and floods it with `color` using sourceAtop.
-    // Result is NOT a template image — the color is baked in.
-    private func tinted(_ source: NSImage, color: NSColor) -> NSImage {
-        let size = NSSize(width: 18, height: 18)
-        let result = NSImage(size: size)
-        result.lockFocus()
-        source.draw(in: NSRect(origin: .zero, size: size))
-        color.set()
-        NSRect(origin: .zero, size: size).fill(using: .sourceAtop)
-        result.unlockFocus()
-        return result
+    private func menuBarIcon() -> NSImage {
+        if let url = Bundle.main.url(forResource: "icon-menubar", withExtension: "png"),
+           let img = NSImage(contentsOf: url) {
+            img.isTemplate = true
+            img.size = NSSize(width: 18, height: 18)
+            return img
+        }
+        let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
+        return NSImage(systemSymbolName: "cursorarrow.motionlines", accessibilityDescription: nil)?
+            .withSymbolConfiguration(config) ?? NSImage()
     }
 
     private static func toolTip(for state: JigglerState, permissionWarning: Bool) -> String {
