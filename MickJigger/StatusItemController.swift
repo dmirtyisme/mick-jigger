@@ -62,26 +62,22 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     func update(state: JigglerState, permissionWarning: Bool) {
         guard let button = statusItem.button else { return }
-        button.image = menuBarIcon()
-        button.imageScaling = .scaleProportionallyDown
+        button.image = makeIcon()
         button.contentTintColor = nil
         button.toolTip = Self.toolTip(for: state, permissionWarning: permissionWarning)
         switch state {
-        case .inactive, .monitoring:          button.alphaValue = 0.4
-        case .activeManual, .activeAuto:      button.alphaValue = 1.0
+        case .inactive:                  button.alphaValue = 0.4
+        case .monitoring:                button.alphaValue = 0.6
+        case .activeManual, .activeAuto: button.alphaValue = 1.0
         }
     }
 
-    private func menuBarIcon() -> NSImage {
-        if let url = Bundle.main.url(forResource: "icon-menubar", withExtension: "png"),
-           let img = NSImage(contentsOf: url) {
-            img.isTemplate = true
-            img.size = NSSize(width: 18, height: 18)
-            return img
-        }
+    private func makeIcon() -> NSImage {
         let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
-        return NSImage(systemSymbolName: "cursorarrow.motionlines", accessibilityDescription: nil)?
-            .withSymbolConfiguration(config) ?? NSImage()
+        let img = NSImage(systemSymbolName: "cursorarrow", accessibilityDescription: nil)!
+            .withSymbolConfiguration(config)!
+        img.isTemplate = true
+        return img
     }
 
     private static func toolTip(for state: JigglerState, permissionWarning: Bool) -> String {
