@@ -24,8 +24,8 @@ final class HotkeyManager {
     func register() {
         HotkeyManager.current = self
         let mods = UInt32(optionKey | cmdKey)
-        var id1 = EventHotKeyID(signature: Self.sig, id: Self.toggleID)
-        var id2 = EventHotKeyID(signature: Self.sig, id: Self.monitorID)
+        let id1 = EventHotKeyID(signature: Self.sig, id: Self.toggleID)
+        let id2 = EventHotKeyID(signature: Self.sig, id: Self.monitorID)
         RegisterEventHotKey(UInt32(kVK_ANSI_J), mods, id1,
                             GetApplicationEventTarget(), 0, &toggleKey)
         RegisterEventHotKey(UInt32(kVK_ANSI_M), mods, id2,
