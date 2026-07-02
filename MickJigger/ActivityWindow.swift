@@ -1349,6 +1349,11 @@ private final class TrailView: NSView {
         let w = screenFrame.width
         let h = screenFrame.height
 
+        print("Screen bounds:", screenFrame)
+        print("First point:", points.first.map { CGPoint(x: $0.x, y: $0.y) } ?? .zero)
+        print("Last point:", points.last.map { CGPoint(x: $0.x, y: $0.y) } ?? .zero)
+        print("Total points:", points.count)
+
         guard let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil,
             pixelsWide: Int(w * scale),
@@ -1369,22 +1374,26 @@ private final class TrailView: NSView {
         }
         NSGraphicsContext.current = gc
         gc.cgContext.scaleBy(x: scale, y: scale)
-        // Trail points are in screen coordinates where y=0 is at the top (flipped).
-        // CG has y=0 at the bottom, so flip here once for the whole context.
-        gc.cgContext.translateBy(x: 0, y: h)
-        gc.cgContext.scaleBy(x: 1, y: -1)
 
         // Black background.
         NSColor.black.setFill()
         NSRect(x: 0, y: 0, width: w, height: h).fill()
 
+        // TrailPoints are in CGEvent Quartz global space: y=0 at top of main display,
+        // increases downward. CG AppKit context has y=0 at bottom, increases upward.
+        // Remap: subtract screen origin (handles non-zero minX/minY on multi-display
+        // arrangements), then flip Y.
+        func remap(_ pt: TrailPoint) -> CGPoint {
+            CGPoint(
+                x: pt.x - screenFrame.minX,
+                y: h - (pt.y - screenFrame.minY))
+        }
+
         if points.count >= 3 {
             for i in 1..<(points.count - 1) {
                 let a = points[i-1], b = points[i], c = points[i+1]
                 if b.time - a.time > Self.gapSeconds || c.time - b.time > Self.gapSeconds { continue }
-                let pa = CGPoint(x: a.x, y: a.y)
-                let pb = CGPoint(x: b.x, y: b.y)
-                let pc = CGPoint(x: c.x, y: c.y)
+                let pa = remap(a), pb = remap(b), pc = remap(c)
                 let from = CGPoint(x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2)
                 let to   = CGPoint(x: (pb.x + pc.x) / 2, y: (pb.y + pc.y) / 2)
                 let path = NSBezierPath()
