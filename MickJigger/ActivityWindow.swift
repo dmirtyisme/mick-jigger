@@ -1,6 +1,9 @@
 import AppKit
 import UniformTypeIdentifiers
 
+private enum ActivityMode { case dashboard, trail }
+private enum ActivityPeriod { case today, week, month, allTime }
+
 final class ActivityWindowController: NSWindowController {
 
     private static let contentWidth: CGFloat = 520
@@ -8,8 +11,12 @@ final class ActivityWindowController: NSWindowController {
     private static let cardGap: CGFloat = 12
     private static let outerPadding: CGFloat = 20
 
+    // Deliberately one style throughout: outline (non-`.fill`) SF Symbols,
+    // rendered via MetricIconView so every glyph sits in an identical
+    // fixed-size box regardless of its natural shape. Don't add a `.fill`
+    // variant here — see MetricIconView's header comment for why.
     private static let metricIcons: [String: String] = [
-        "Activity Score":    "chart.bar.fill",
+        "Activity Score":    "chart.bar",
         "Active Time":       "clock",
         "Clicks":            "cursorarrow.click",
         "Double-clicks":     "cursorarrow.click.2",
@@ -21,7 +28,7 @@ final class ActivityWindowController: NSWindowController {
         "Max Cursor Speed":  "gauge.high",
         "Last Activity":     "clock.arrow.circlepath",
         "Avg Active / Day":  "chart.bar.xaxis",
-        "Avg Activity Score":"chart.bar.fill",
+        "Avg Activity Score":"chart.bar",
         "Sessions":          "repeat",
         "Days Tracked":      "calendar",
     ]
@@ -30,8 +37,13 @@ final class ActivityWindowController: NSWindowController {
 
     private let permissionBanner = NSView()
     private let tabs = NSSegmentedControl(
-        labels: ["Today", "Week", "Month", "All Time", "Trail"],
+        labels: ["Dashboard", "Trail"],
         trackingMode: .selectOne, target: nil, action: nil)
+    private let periodControl = NSSegmentedControl(
+        labels: ["Today", "Week", "Month", "All Time"],
+        trackingMode: .selectOne, target: nil, action: nil)
+    private var mode: ActivityMode = .dashboard
+    private var period: ActivityPeriod = .today
     private let shareButton = NSButton()
     private let trackingStatusLabel = NSTextField(labelWithString: "")
     private let contentStack = NSStackView()
@@ -40,18 +52,28 @@ final class ActivityWindowController: NSWindowController {
     private var mainScrollView: NSScrollView?
     private var shouldAnimateNextRefresh = false
     private var personalRecordRows: [(label: String, value: String, symbol: String)] = []
+    private var perDayRows: [(day: String, distancePx: Double, clicks: Int, activeSeconds: Double, score: Int)] = []
+    private weak var perDayTableView: NSTableView?
     private var showTrailDetails = true
     private var buildTarget: NSStackView!
 
     init(service: ActivityService) {
         self.service = service
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 580),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 660),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false)
         window.title = "Activity"
         window.center()
+        // Width is locked (content is pinned to a fixed contentWidth
+        // throughout this file, not a responsive grid), but height is free —
+        // people asked to drag the window taller to see more of the
+        // scrollable content without a second scroll-inside-scroll feel.
+        // Default height bumped 580→660 so the Overview tab's first few
+        // cards fit without triggering a scrollbar on first launch.
+        window.minSize = NSSize(width: 560, height: 460)
+        window.maxSize = NSSize(width: 560, height: CGFloat.greatestFiniteMagnitude)
         super.init(window: window)
         buildContent()
         tabs.selectedSegment = 0
@@ -72,11 +94,14 @@ final class ActivityWindowController: NSWindowController {
     private func buildContent() {
         guard let window else { return }
 
-        let effectView = NSVisualEffectView()
-        effectView.material = .sidebar
-        effectView.blendingMode = .behindWindow
-        effectView.state = .active
-        effectView.translatesAutoresizingMaskIntoConstraints = false
+        // Flat, opaque, semantic canvas — deliberately not NSVisualEffectView.
+        // The previous .sidebar vibrancy stacked with the cards' own 60%-alpha
+        // fill, so the window picked up whatever was behind it on the desktop
+        // and read as a dirty, inconsistent gray. window.backgroundColor is a
+        // live semantic color (auto light/dark) with none of that blending —
+        // same "gray canvas + solid card" read as System Settings/Screen Time.
+        window.backgroundColor = .underPageBackgroundColor
+        window.isOpaque = true
 
         let root = NSStackView()
         root.orientation = .vertical
@@ -108,6 +133,13 @@ final class ActivityWindowController: NSWindowController {
         headerRow.spacing = 8
         root.addArrangedSubview(headerRow)
 
+        periodControl.controlSize = .small
+        periodControl.segmentStyle = .automatic
+        periodControl.target = self
+        periodControl.action = #selector(periodChanged)
+        periodControl.selectedSegment = 0
+        root.addArrangedSubview(periodControl)
+
         trackingStatusLabel.font = .systemFont(ofSize: 11)
         root.addArrangedSubview(trackingStatusLabel)
 
@@ -117,6 +149,13 @@ final class ActivityWindowController: NSWindowController {
 
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
+        // Force overlay + autohide regardless of the user's System Settings
+        // > Appearance > "Show scroll bars" preference. If that's set to
+        // "Always" system-wide, NSScrollView defaults to a persistent
+        // legacy-style bar sitting right on top of the card edges — this
+        // pins it to the thin, fades-away-when-idle style everywhere.
+        scroll.scrollerStyle = .overlay
+        scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
         mainScrollView = scroll
@@ -129,24 +168,15 @@ final class ActivityWindowController: NSWindowController {
         ])
         root.addArrangedSubview(scroll)
 
-        effectView.addSubview(root)
-        let container = NSView()
-        container.addSubview(effectView)
-        window.contentView = container
+        // root is the contentView directly — no vibrancy wrapper, no fixed
+        // height. Width stays pinned (560 = contentWidth + root's own
+        // outerPadding on both sides); height is left unconstrained so the
+        // stack — and the scroll view inside it — can grow when the window
+        // is resized taller (see minSize/maxSize in init).
+        window.contentView = root
 
         NSLayoutConstraint.activate([
-            effectView.topAnchor.constraint(equalTo: container.topAnchor),
-            effectView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            effectView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            effectView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-
-            root.topAnchor.constraint(equalTo: effectView.topAnchor),
-            root.bottomAnchor.constraint(equalTo: effectView.bottomAnchor),
-            root.leadingAnchor.constraint(equalTo: effectView.leadingAnchor),
-            root.trailingAnchor.constraint(equalTo: effectView.trailingAnchor),
-
-            container.widthAnchor.constraint(equalToConstant: 560),
-            container.heightAnchor.constraint(equalToConstant: 580),
+            root.widthAnchor.constraint(equalToConstant: 560),
 
             scroll.widthAnchor.constraint(equalToConstant: Self.contentWidth),
             permissionBanner.widthAnchor.constraint(equalToConstant: Self.contentWidth),
@@ -209,6 +239,19 @@ final class ActivityWindowController: NSWindowController {
     }
 
     @objc private func tabChanged() {
+        mode = tabs.selectedSegment == 0 ? .dashboard : .trail
+        periodControl.isHidden = mode == .trail
+        shouldAnimateNextRefresh = true
+        refresh()
+    }
+
+    @objc private func periodChanged() {
+        switch periodControl.selectedSegment {
+        case 1: period = .week
+        case 2: period = .month
+        case 3: period = .allTime
+        default: period = .today
+        }
         shouldAnimateNextRefresh = true
         refresh()
     }
@@ -267,12 +310,9 @@ final class ActivityWindowController: NSWindowController {
         }
         trailView = nil
         buildTarget = contentStack
-        switch tabs.selectedSegment {
-        case 0: buildTodayTab()
-        case 1: buildPeriodTab(days: 7, title: "Last 7 days")
-        case 2: buildMonthTab()
-        case 3: buildAllTimeTab()
-        default: buildTrailTab()
+        switch mode {
+        case .dashboard: buildDashboard(period: period)
+        case .trail:     buildTrailTab()
         }
         // Sync reset (pre-layout) + async reset (post-layout) to prevent flash.
         if let sv = mainScrollView {
@@ -322,25 +362,55 @@ final class ActivityWindowController: NSWindowController {
         trackingStatusLabel.attributedStringValue = status
     }
 
-    // MARK: - Today
+    // MARK: - Dashboard
 
-    private func buildTodayTab() {
+    private func buildDashboard(period: ActivityPeriod) {
+        switch period {
+        case .today:   buildTodayDashboard()
+        case .week:    buildPeriodTab(days: 7, title: "Last 7 days")
+        case .month:   buildMonthDashboard()
+        case .allTime: buildAllTimeTab()
+        }
+    }
+
+    private func buildTodayDashboard() {
         let stats = service.todaySnapshot()
+        let insights = service.insightsToday()
+
         addSection("Today")
-        let avgSpeed = stats.activeSeconds > 0 ? stats.distancePx / stats.activeSeconds : 0
-        addMetricCards([
-            ("Activity Score",   "\(stats.score) / 100"),
-            ("Active Time",      ActivityService.formatDuration(stats.activeSeconds)),
-            ("Clicks",           ActivityService.formatCount(stats.clicks)),
-            ("Double-clicks",    ActivityService.formatCount(stats.doubleClicks)),
-            ("Scrolls",          ActivityService.formatCount(stats.scrolls)),
-            ("Cursor Distance",  ActivityService.formatDistance(px: stats.distancePx)),
-            ("Idle Time",        ActivityService.formatDuration(stats.idleSeconds)),
-            ("Longest Session",  ActivityService.formatDuration(stats.longestSessionSeconds)),
-            ("Avg Cursor Speed", String(format: "%.0f px/s", avgSpeed)),
-            ("Max Cursor Speed", String(format: "%.0f px/s", stats.maxSpeedPxPerSec)),
-            ("Last Activity",    stats.lastActivity.map(Self.timeString) ?? "—"),
+
+        // Score and today's plain-language insight at equal visual weight,
+        // side by side — direct feedback was that a bare "32/100" means
+        // nothing without context, while "today your cursor traveled 285m"
+        // needs none. The insight used to be buried after the ratio card,
+        // timeline, and trail preview; now it's part of the hero row.
+        let heroRow = NSStackView(views: [
+            scoreTile(stats: stats),
+            insightTile(insights.first
+                ?? "Keep going — insights build up as activity accumulates."),
         ])
+        heroRow.orientation = .horizontal
+        heroRow.spacing = Self.cardGap
+        heroRow.distribution = .fillEqually
+        contentStack.addArrangedSubview(heroRow)
+        heroRow.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+
+        // Same tile used in "All metrics" below and in Week/Month/All Time —
+        // the Overview's key stats are now the same visual system as the
+        // rest of the app, not a bespoke hero-row layout with its own
+        // icon/label/value treatment. Trimmed to the 4 most-referenced
+        // numbers; Longest Session and the rest are still one tap away in
+        // "All metrics."
+        addMetricCards([
+            ("Active Time",      ActivityService.formatDuration(stats.activeSeconds)),
+            ("Cursor Distance",  ActivityService.formatDistance(px: stats.distancePx)),
+            ("Clicks",           ActivityService.formatCount(stats.clicks)),
+            ("Scrolls",          ActivityService.formatCount(stats.scrolls)),
+        ])
+
+        let ratio = realSyntheticRatioCard(stats: stats)
+        contentStack.addArrangedSubview(ratio)
+        ratio.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
 
         addSeparator()
         addSection("Activity Timeline")
@@ -357,22 +427,181 @@ final class ActivityWindowController: NSWindowController {
         }
         addTimelineCard(bins: stats.hourBins, caption: caption.joined(separator: "  ·  "))
 
+        let preview = trailPreviewCard()
+        contentStack.addArrangedSubview(preview)
+        preview.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+
         addSeparator()
-        addDisclosureSection("Real vs Synthetic") {
+        addDisclosureSection("All metrics", expanded: false) {
+            let avgSpeed = stats.activeSeconds > 0 ? stats.distancePx / stats.activeSeconds : 0
+            addMetricCards([
+                ("Activity Score",   "\(stats.score) / 100"),
+                ("Active Time",      ActivityService.formatDuration(stats.activeSeconds)),
+                ("Clicks",           ActivityService.formatCount(stats.clicks)),
+                ("Double-clicks",    ActivityService.formatCount(stats.doubleClicks)),
+                ("Scrolls",          ActivityService.formatCount(stats.scrolls)),
+                ("Cursor Distance",  ActivityService.formatDistance(px: stats.distancePx)),
+                ("Idle Time",        ActivityService.formatDuration(stats.idleSeconds)),
+                ("Longest Session",  ActivityService.formatDuration(stats.longestSessionSeconds)),
+                ("Avg Cursor Speed", String(format: "%.0f px/s", avgSpeed)),
+                ("Max Cursor Speed", String(format: "%.0f px/s", stats.maxSpeedPxPerSec)),
+                ("Last Activity",    stats.lastActivity.map(Self.timeString) ?? "—"),
+            ])
+        }
+
+        addDisclosureSection("Real vs Synthetic — details", expanded: false) {
             addBreakdown(
                 realClicks: stats.clicks, realScrolls: stats.scrolls, realDistance: stats.distancePx,
                 synClicks: stats.synClicks, synScrolls: stats.synScrolls,
                 synDistance: stats.synDistancePx, synMoves: stats.synEvents)
         }
 
-        let insights = service.insightsToday()
-        if !insights.isEmpty {
-            addSeparator()
-            addDisclosureSection("Insights") {
-                addInsightsBox(insights)
+        if insights.count > 1 {
+            addDisclosureSection("More insights", expanded: false) {
+                for line in insights.dropFirst() {
+                    addCaption(line)
+                }
             }
         }
         scrollToTop()
+    }
+
+    // MARK: - Overview dashboard components
+
+    /// Same anatomy as metricCard (icon → value → label, same card() chrome,
+    /// same 72pt minimum height) so the score tile sits in the grid as a
+    /// peer, not a one-off hero layout — just with the two-tier "32 / 100"
+    /// number treatment preserved instead of metricCard's single value
+    /// string.
+    private func scoreTile(stats: ActivityService.TodayStats) -> NSView {
+        let icon = MetricIconView(symbol: Self.metricIcons["Activity Score"] ?? "chart.bar")
+
+        let scoreNumber = NSTextField(labelWithString: "\(stats.score)")
+        scoreNumber.font = .monospacedDigitSystemFont(ofSize: 26, weight: .semibold)
+        scoreNumber.textColor = .labelColor
+
+        let scoreMax = NSTextField(labelWithString: "/ 100")
+        scoreMax.font = .systemFont(ofSize: 12, weight: .medium)
+        scoreMax.textColor = .tertiaryLabelColor
+
+        let numberRow = NSStackView(views: [scoreNumber, scoreMax])
+        numberRow.orientation = .horizontal
+        numberRow.alignment = .lastBaseline
+        numberRow.spacing = 4
+
+        let titleLabel = NSTextField(labelWithString: "Activity Score")
+        titleLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        titleLabel.textColor = .secondaryLabelColor
+
+        let stack = NSStackView(views: [icon, numberRow, titleLabel])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 3
+
+        let cardView = card(stack)
+        cardView.heightAnchor.constraint(greaterThanOrEqualToConstant: 72).isActive = true
+        return cardView
+    }
+
+    /// Insight's tile pairing with scoreTile in the hero row — same chrome,
+    /// same minimum height, wrapping text instead of a value/label pair.
+    private func insightTile(_ text: String) -> NSView {
+        let icon = MetricIconView(symbol: "lightbulb", tint: .systemBlue)
+
+        let textLabel = NSTextField(wrappingLabelWithString: text)
+        textLabel.font = .systemFont(ofSize: 12)
+        textLabel.textColor = .labelColor
+
+        let stack = NSStackView(views: [icon, textLabel])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+
+        let cardView = card(stack)
+        cardView.heightAnchor.constraint(greaterThanOrEqualToConstant: 72).isActive = true
+        return cardView
+    }
+
+    /// One-line synthesis of the full Real vs Synthetic breakdown (still
+    /// available, unabridged, via the "Real vs Synthetic — details"
+    /// disclosure below) — a single ratio bar answering "how much of today
+    /// was really me?" without expanding a metric-by-metric comparison.
+    private func realSyntheticRatioCard(stats: ActivityService.TodayStats) -> NSView {
+        let totalDistance = stats.distancePx + stats.synDistancePx
+        let realFraction = totalDistance > 0 ? stats.distancePx / totalDistance : 1.0
+
+        let titleLabel = NSTextField(labelWithString: "Real vs Synthetic")
+        titleLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        titleLabel.textColor = .secondaryLabelColor
+
+        let pctLabel = NSTextField(labelWithString: totalDistance > 0
+            ? "\(Int((realFraction * 100).rounded()))% real movement today"
+            : "No movement recorded yet today")
+        pctLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        pctLabel.textColor = .labelColor
+
+        let bar = RatioBarView(realFraction: realFraction)
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bar.heightAnchor.constraint(equalToConstant: 8).isActive = true
+        bar.widthAnchor.constraint(
+            equalToConstant: Self.contentWidth - 2 * Self.cardPadding).isActive = true
+
+        let footnote = NSTextField(labelWithString:
+            "Based on cursor distance — clicks and scrolls are in the details below")
+        footnote.font = .systemFont(ofSize: 10)
+        footnote.textColor = .tertiaryLabelColor
+
+        let stack = NSStackView(views: [titleLabel, pctLabel, bar, footnote])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        return card(stack)
+    }
+
+    /// Small non-interactive preview of today's trail with a link into the
+    /// full Trail tab (export/share live there). This card's job is "does
+    /// this look like a normal day," not full detail.
+    private func trailPreviewCard() -> NSView {
+        let points = service.trailPoints()
+        let preview = TrailView(points: points)
+        let previewWidth = Self.contentWidth - 2 * Self.cardPadding
+        preview.widthAnchor.constraint(equalToConstant: previewWidth).isActive = true
+        // 110pt made this a ~4.4:1 letterbox — flat enough that even a full
+        // trail reads as a thin illegible smear, and the empty-state message
+        // sits in a mostly-dead box. 170pt (~2.9:1) still reads as a
+        // "preview," not the full Trail tab, but stops fighting the actual
+        // desktop aspect ratio TrailView maps onto quite so hard.
+        preview.heightAnchor.constraint(equalToConstant: 170).isActive = true
+
+        let titleLabel = NSTextField(labelWithString: "Cursor Trail")
+        titleLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        titleLabel.textColor = .secondaryLabelColor
+
+        let openButton = NSButton(
+            title: "Open Trail  →", target: self, action: #selector(openTrailTab))
+        openButton.isBordered = false
+        openButton.font = .systemFont(ofSize: 11, weight: .medium)
+        openButton.contentTintColor = .controlAccentColor
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        let headerRow = NSStackView(views: [titleLabel, spacer, openButton])
+        headerRow.orientation = .horizontal
+        headerRow.alignment = .centerY
+
+        let stack = NSStackView(views: [headerRow, preview])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        return card(stack)
+    }
+
+    @objc private func openTrailTab() {
+        mode = .trail
+        tabs.selectedSegment = 1
+        periodControl.isHidden = true
+        shouldAnimateNextRefresh = true
+        refresh()
     }
 
     // MARK: - Week
@@ -391,6 +620,9 @@ final class ActivityWindowController: NSWindowController {
             ("Longest Session",   ActivityService.formatDuration(stats.longestSessionSeconds)),
         ])
         addSeparator()
+        addSection("Activity Timeline")
+        addDailyTimelineCard(perDay: stats.perDay, days: days)
+        addSeparator()
         addDisclosureSection("Real vs Synthetic") {
             addBreakdown(
                 realClicks: stats.clicks, realScrolls: stats.scrolls, realDistance: stats.distancePx,
@@ -408,7 +640,7 @@ final class ActivityWindowController: NSWindowController {
 
     // MARK: - Month
 
-    private func buildMonthTab() {
+    private func buildMonthDashboard() {
         buildPeriodTab(days: 30, title: "Last 30 days")
         let calendar = Calendar.current
         let startOfToday = calendar.startOfDay(for: Date())
@@ -592,6 +824,7 @@ final class ActivityWindowController: NSWindowController {
         ctx.draw(trailCG, in: CGRect(x: 0, y: panelPx + gapPx, width: pixW, height: pixH - panelPx - gapPx))
 
         if showTrailDetails {
+            drawSpeedLegend(ctx: ctx, totalHeight: pixH, scale: scale)
             drawSharePanel(ctx: ctx, width: pixW, height: panelPx, scale: scale)
         } else {
             drawShareWatermark(ctx: ctx, width: pixW, height: pixH, scale: scale)
@@ -599,6 +832,25 @@ final class ActivityWindowController: NSWindowController {
 
         guard let finalCG = ctx.makeImage() else { return nil }
         return NSBitmapImageRep(cgImage: finalCG).representation(using: .png, properties: [:])
+    }
+
+    /// The trail's line color/width encode cursor speed (see
+    /// TrailView.color(forSpeed:)/width(forSpeed:)) — real signal, but with
+    /// no key it just reads as visual noise to anyone outside the app who
+    /// opens the exported PNG. One small caption, anchored to the trail's
+    /// top-left corner (same corner the no-panel watermark uses).
+    private func drawSpeedLegend(ctx: CGContext, totalHeight: Int, scale: CGFloat) {
+        let text = "Line color/width = cursor speed"
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 8.0 * scale),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.35)
+        ]
+        let str = NSAttributedString(string: text, attributes: attrs)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+        let topY = CGFloat(totalHeight) - str.size().height - 10 * scale
+        str.draw(at: NSPoint(x: 10 * scale, y: topY))
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     private func drawShareWatermark(ctx: CGContext, width: Int, height: Int, scale: CGFloat) {
@@ -647,45 +899,39 @@ final class ActivityWindowController: NSWindowController {
         NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
 
         // Column content helper.
-        func drawColumn(x: CGFloat, w: CGFloat, label: String, value: String, rowLabel: String) {
+        // One eyebrow per column, and it's always the metric's own category
+        // — not a mix of brand name / date / "Today" like before, where the
+        // three columns each showed a different *kind* of label above the
+        // value. Brand, date and score now live once, together, in the
+        // footer below instead of being scattered across column headers.
+        func drawColumn(x: CGFloat, w: CGFloat, category: String, value: String) {
             let topPad = CGFloat(height) - 18 * scale
-            // Row 1 label (9pt uppercase, 50% white).
-            let lbl1 = NSAttributedString(string: label.uppercased(), attributes: [
+            let eyebrow = NSAttributedString(string: category.uppercased(), attributes: [
                 .font: NSFont.systemFont(ofSize: 9 * scale),
                 .foregroundColor: NSColor.white.withAlphaComponent(0.5)
             ])
-            lbl1.draw(at: NSPoint(x: x + 8 * scale, y: topPad))
+            eyebrow.draw(at: NSPoint(x: x + 8 * scale, y: topPad))
 
-            // Row 2 value (SF Mono 18pt semibold, 100% white).
+            // Value (SF Mono 18pt semibold, 100% white), roughly vertically
+            // centered in the remaining space now that there's no sublabel
+            // competing for room underneath it.
             let val = NSAttributedString(string: value, attributes: [
                 .font: NSFont.monospacedSystemFont(ofSize: 18 * scale, weight: .semibold),
                 .foregroundColor: NSColor.white
             ])
-            val.draw(at: NSPoint(x: x + 8 * scale, y: CGFloat(height) * 0.38))
-
-            // Row 2 sublabel (8pt uppercase, 40% white).
-            let lbl2 = NSAttributedString(string: rowLabel.uppercased(), attributes: [
-                .font: NSFont.systemFont(ofSize: 8 * scale),
-                .foregroundColor: NSColor.white.withAlphaComponent(0.4)
-            ])
-            lbl2.draw(at: NSPoint(x: x + 8 * scale, y: CGFloat(height) * 0.19))
+            val.draw(at: NSPoint(x: x + 8 * scale, y: CGFloat(height) * 0.28))
         }
 
-        drawColumn(x: 0, w: CGFloat(col1),
-                   label: "Mick Jigger",
-                   value: ActivityService.formatDistance(px: stats.distancePx),
-                   rowLabel: "Cursor")
-        drawColumn(x: CGFloat(col1 + divW), w: CGFloat(col2 - col1 - divW),
-                   label: dateStr,
-                   value: ActivityService.formatCount(stats.clicks),
-                   rowLabel: "Clicks")
-        drawColumn(x: CGFloat(col2 + divW), w: CGFloat(width - col2 - divW),
-                   label: "Today",
-                   value: ActivityService.formatDuration(stats.activeSeconds),
-                   rowLabel: "Active Time")
+        drawColumn(x: 0, w: CGFloat(col1), category: "Cursor",
+                   value: ActivityService.formatDistance(px: stats.distancePx))
+        drawColumn(x: CGFloat(col1 + divW), w: CGFloat(col2 - col1 - divW), category: "Clicks",
+                   value: ActivityService.formatCount(stats.clicks))
+        drawColumn(x: CGFloat(col2 + divW), w: CGFloat(width - col2 - divW), category: "Active Time",
+                   value: ActivityService.formatDuration(stats.activeSeconds))
 
-        // Footer (full width, 9pt, 30% white).
-        let footer = "Score \(stats.score)/100 · \(stats.sessionCount) sessions · mickjigger.app"
+        // Footer (full width, 9pt, 30% white) — brand, date, score, sessions
+        // all consolidated here instead of spread across column eyebrows.
+        let footer = "\(dateStr) · Score \(stats.score)/100 · \(stats.sessionCount) sessions · mickjigger.app"
         let footerStr = NSAttributedString(string: footer, attributes: [
             .font: NSFont.systemFont(ofSize: 9 * scale),
             .foregroundColor: NSColor.white.withAlphaComponent(0.3)
@@ -784,9 +1030,22 @@ final class ActivityWindowController: NSWindowController {
     private func card(_ content: NSView, padding: CGFloat = ActivityWindowController.cardPadding) -> NSView {
         let box = NSBox()
         box.boxType = .custom
-        box.fillColor = NSColor.windowBackgroundColor.withAlphaComponent(0.6)
+        // Opaque, not the previous 60%-alpha windowBackgroundColor — that
+        // translucency on top of the old vibrancy canvas was the other half
+        // of the "dirty gray" problem. controlBackgroundColor is the
+        // semantic "card sitting on a grouped canvas" color (near-white in
+        // light mode, dark gray in dark mode) and needs no alpha trick.
+        box.fillColor = .controlBackgroundColor
         box.cornerRadius = 10
-        box.borderWidth = 0
+        // controlBackgroundColor and the underPageBackgroundColor canvas sit
+        // close together in luminance in light mode, so a fill color alone
+        // barely registers as a distinct surface — reads as a smudge, not a
+        // card. A 1px separatorColor hairline gives it a defined edge
+        // without needing a shadow (which would need an extra unclipped
+        // wrapper view to avoid getting cut off by the box's own rounded-
+        // corner mask — deferred, not worth the complexity for this pass).
+        box.borderWidth = 1
+        box.borderColor = .separatorColor
         box.contentViewMargins = NSSize(width: 0, height: 0)
         box.translatesAutoresizingMaskIntoConstraints = false
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -813,7 +1072,11 @@ final class ActivityWindowController: NSWindowController {
                 rowStack.addArrangedSubview(metricCard(title: pair.0, value: pair.1))
             }
             if metrics.count - index == 1 { rowStack.addArrangedSubview(NSView()) }
-            contentStack.addArrangedSubview(rowStack)
+            // buildTarget, not contentStack directly — addMetricCards can run
+            // inside a disclosure section's build closure (see "All metrics"
+            // in buildOverviewTab), and needs to land in that section's
+            // collapsible container, not always at the top level.
+            buildTarget.addArrangedSubview(rowStack)
             rowStack.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
             index += 2
         }
@@ -821,10 +1084,7 @@ final class ActivityWindowController: NSWindowController {
 
     private func metricCard(title: String, value: String) -> NSView {
         let symbolName = Self.metricIcons[title] ?? "square.dashed"
-        let icon = NSImageView()
-        icon.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
-        icon.symbolConfiguration = .init(pointSize: 13, weight: .medium)
-        icon.contentTintColor = .systemBlue
+        let icon = MetricIconView(symbol: symbolName)
 
         let valueLabel = NSTextField(labelWithString: value)
         valueLabel.font = .systemFont(ofSize: 26, weight: .semibold)
@@ -845,6 +1105,28 @@ final class ActivityWindowController: NSWindowController {
     }
 
     // MARK: - Timeline
+
+    private func addDailyTimelineCard(
+        perDay: [(day: String, distancePx: Double, clicks: Int, activeSeconds: Double, score: Int)],
+        days: Int
+    ) {
+        guard !perDay.isEmpty else { return }
+        let bins = perDay.map { $0.score }
+        let df = DateFormatter()
+        df.dateFormat = days <= 7 ? "EEE" : "d"
+        let labels: [String] = perDay.map { entry in
+            ActivityStore.date(fromDayKey: entry.day).map { df.string(from: $0) } ?? entry.day
+        }
+        let timeline = DailyTimelineView(bins: bins, labels: labels)
+        let stack = NSStackView(views: [timeline])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        timeline.widthAnchor.constraint(
+            equalToConstant: Self.contentWidth - 2 * Self.cardPadding).isActive = true
+        let cardView = card(stack)
+        buildTarget.addArrangedSubview(cardView)
+        cardView.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+    }
 
     private func addTimelineCard(bins: [Int], caption: String) {
         let timeline = TimelineView(bins: bins)
@@ -954,97 +1236,6 @@ final class ActivityWindowController: NSWindowController {
         return block
     }
 
-    // MARK: - Insights box
-
-    private func addInsightsBox(_ insights: [String]) {
-        let stats = service.todaySnapshot()
-        let avgSpeed = stats.activeSeconds > 0
-            ? stats.distancePx / stats.activeSeconds : 0
-        let rows: [(String, String)] = [
-            ("Activity Score",   "\(stats.score) / 100"),
-            ("Active Time",      ActivityService.formatDuration(stats.activeSeconds)),
-            ("Cursor Distance",  ActivityService.formatDistance(px: stats.distancePx)),
-            ("Clicks",           ActivityService.formatCount(stats.clicks)),
-            ("Scrolls",          ActivityService.formatCount(stats.scrolls)),
-            ("Avg Speed",        String(format: "%.0f px/s", avgSpeed)),
-        ].filter { _ in true }
-
-        let rowHeight: CGFloat = 36
-        let separatorH: CGFloat = 0.5
-        let innerWidth = Self.contentWidth - 2 * Self.cardPadding
-
-        let container = NSStackView()
-        container.orientation = .vertical
-        container.alignment = .leading
-        container.spacing = 0
-
-        for (i, row) in rows.enumerated() {
-            let rowView = NSView()
-            rowView.translatesAutoresizingMaskIntoConstraints = false
-            rowView.heightAnchor.constraint(equalToConstant: rowHeight).isActive = true
-            rowView.widthAnchor.constraint(equalToConstant: innerWidth).isActive = true
-
-            let nameLabel = NSTextField(labelWithString: row.0)
-            nameLabel.font = .systemFont(ofSize: 13)
-            nameLabel.textColor = .labelColor
-            nameLabel.translatesAutoresizingMaskIntoConstraints = false
-
-            let valueLabel = NSTextField(labelWithString: row.1)
-            valueLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-            valueLabel.textColor = .systemBlue
-            valueLabel.alignment = .right
-            valueLabel.translatesAutoresizingMaskIntoConstraints = false
-
-            rowView.addSubview(nameLabel)
-            rowView.addSubview(valueLabel)
-            NSLayoutConstraint.activate([
-                nameLabel.leadingAnchor.constraint(equalTo: rowView.leadingAnchor),
-                nameLabel.centerYAnchor.constraint(equalTo: rowView.centerYAnchor),
-                valueLabel.trailingAnchor.constraint(equalTo: rowView.trailingAnchor),
-                valueLabel.centerYAnchor.constraint(equalTo: rowView.centerYAnchor),
-                nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: valueLabel.leadingAnchor, constant: -8),
-            ])
-            container.addArrangedSubview(rowView)
-
-            if i < rows.count - 1 {
-                let sep = NSBox()
-                sep.boxType = .custom
-                sep.fillColor = NSColor.separatorColor
-                sep.borderWidth = 0
-                sep.translatesAutoresizingMaskIntoConstraints = false
-                sep.heightAnchor.constraint(equalToConstant: separatorH).isActive = true
-                sep.widthAnchor.constraint(equalToConstant: innerWidth).isActive = true
-                container.addArrangedSubview(sep)
-            }
-        }
-
-        let box = NSBox()
-        box.boxType = .custom
-        box.fillColor = NSColor.windowBackgroundColor.withAlphaComponent(0.6)
-        box.cornerRadius = 10
-        box.borderWidth = 0
-        box.contentViewMargins = NSSize(width: 0, height: 0)
-        box.translatesAutoresizingMaskIntoConstraints = false
-        container.translatesAutoresizingMaskIntoConstraints = false
-        box.addSubview(container)
-        NSLayoutConstraint.activate([
-            container.topAnchor.constraint(equalTo: box.topAnchor, constant: Self.cardPadding),
-            container.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -Self.cardPadding),
-            container.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: Self.cardPadding),
-            container.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -Self.cardPadding),
-        ])
-        buildTarget.addArrangedSubview(box)
-        box.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
-
-        if !insights.isEmpty {
-            let insightLabel = NSTextField(wrappingLabelWithString: insights.joined(separator: "\n"))
-            insightLabel.font = .systemFont(ofSize: 11)
-            insightLabel.textColor = .secondaryLabelColor
-            buildTarget.addArrangedSubview(insightLabel)
-            insightLabel.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
-        }
-    }
-
     // MARK: - Callout rows
 
     private func addCallout(_ text: String, symbol: String) {
@@ -1106,17 +1297,92 @@ final class ActivityWindowController: NSWindowController {
 
     // MARK: - Per-day list
 
+    /// Native NSTableView with real columns (Date / Distance / Clicks /
+    /// Active Time / Score) — replaces the old one-caption-per-day text dump
+    /// ("Fri 3 Jul — 2.4 km · 9 651 clicks · 9h 12m active · score 67"),
+    /// which had no column to scan and no alignment. Column widths mirror
+    /// addPersonalRecordsTable's budget (innerWidth, not the full card —
+    /// this card also uses padding: 0).
     private func addPerDayList(
         _ perDay: [(day: String, distancePx: Double, clicks: Int, activeSeconds: Double, score: Int)]
     ) {
         guard !perDay.isEmpty else { return }
-        for entry in perDay {
-            addCaption("\(Self.dayString(entry.day)) — "
-                + "\(ActivityService.formatDistance(px: entry.distancePx)) · "
-                + "\(ActivityService.formatCount(entry.clicks)) clicks · "
-                + "\(ActivityService.formatDuration(entry.activeSeconds)) active · "
-                + "score \(entry.score)")
+        perDayRows = perDay.reversed() // most recent day first
+
+        let tableView = NSTableView()
+        tableView.style = .plain
+        tableView.usesAlternatingRowBackgroundColors = true
+        tableView.rowHeight = 28
+        tableView.backgroundColor = .clear
+        tableView.gridStyleMask = []
+
+        let specs: [(id: String, title: String, width: CGFloat, alignment: NSTextAlignment)] = [
+            ("date", "Date", 140, .left),
+            ("distance", "Distance", 86, .right),
+            ("clicks", "Clicks", 86, .right),
+            ("active", "Active Time", 112, .right),
+            ("score", "Score", 64, .right),
+        ]
+        for spec in specs {
+            let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(spec.id))
+            col.title = spec.title
+            col.width = spec.width
+            col.headerCell.alignment = spec.alignment
+            tableView.addTableColumn(col)
         }
+        tableView.dataSource = self
+        tableView.delegate = self
+        perDayTableView = tableView
+
+        let scrollView = NSScrollView()
+        scrollView.documentView = tableView
+        scrollView.hasHorizontalScroller = false
+        scrollView.drawsBackground = false
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // Cap visible rows so a full year of history doesn't turn the card
+        // into an endless page — it scrolls internally past that.
+        let maxVisibleRows = 10
+        let visibleRows = min(perDayRows.count, maxVisibleRows)
+        scrollView.hasVerticalScroller = perDayRows.count > maxVisibleRows
+        scrollView.heightAnchor.constraint(
+            equalToConstant: 24 + CGFloat(visibleRows) * tableView.rowHeight).isActive = true
+
+        let cardView = card(scrollView, padding: 0)
+        buildTarget.addArrangedSubview(cardView)
+        cardView.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+    }
+
+    private func perDayCellView(tableColumn: NSTableColumn?, row: Int) -> NSView {
+        let entry = perDayRows[row]
+        let id = tableColumn?.identifier.rawValue ?? ""
+        let text: String
+        switch id {
+        case "date":     text = Self.dayString(entry.day)
+        case "distance": text = ActivityService.formatDistance(px: entry.distancePx)
+        case "clicks":   text = ActivityService.formatCount(entry.clicks)
+        case "active":   text = ActivityService.formatDuration(entry.activeSeconds)
+        case "score":    text = "\(entry.score)"
+        default:         text = ""
+        }
+        let cell = NSTableCellView()
+        let field = NSTextField(labelWithString: text)
+        // Monospaced digits on every numeric column so values actually line
+        // up down the column, not just the column's left/right edge.
+        field.font = id == "date"
+            ? .systemFont(ofSize: 12)
+            : .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        field.textColor = id == "date" ? .labelColor : .secondaryLabelColor
+        field.alignment = id == "date" ? .left : .right
+        field.lineBreakMode = .byTruncatingTail
+        field.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(field)
+        cell.textField = field
+        NSLayoutConstraint.activate([
+            field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+            field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+            field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        return cell
     }
 
     // MARK: - Formatting
@@ -1138,7 +1404,7 @@ final class ActivityWindowController: NSWindowController {
 extension ActivityWindowController: NSTableViewDataSource, NSTableViewDelegate {
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        personalRecordRows.count
+        tableView === perDayTableView ? perDayRows.count : personalRecordRows.count
     }
 
     func tableView(
@@ -1146,6 +1412,9 @@ extension ActivityWindowController: NSTableViewDataSource, NSTableViewDelegate {
         viewFor tableColumn: NSTableColumn?,
         row: Int
     ) -> NSView? {
+        if tableView === perDayTableView {
+            return perDayCellView(tableColumn: tableColumn, row: row)
+        }
         let record = personalRecordRows[row]
         let cell = NSTableCellView()
 
@@ -1191,7 +1460,9 @@ extension ActivityWindowController: NSTableViewDataSource, NSTableViewDelegate {
         return cell
     }
 
-    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { 44 }
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        tableView === perDayTableView ? 28 : 44
+    }
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
 }
 
@@ -1412,6 +1683,71 @@ private final class TrailView: NSView {
 
         NSGraphicsContext.restoreGraphicsState()
         return rep.representation(using: .png, properties: [:])
+    }
+}
+
+// MARK: - DailyTimelineView
+
+/// N-day activity strip: one bar per day, height ∝ activity score.
+/// Used by Week/Month Dashboard periods. Same visual language as TimelineView
+/// (bars + baseline + axis labels) with day buckets instead of hour buckets.
+private final class DailyTimelineView: NSView {
+
+    private let bins: [Int]
+    private let labels: [String]
+    private static let labelHeight: CGFloat = 16
+    private static let topPadding: CGFloat = 8
+
+    init(bins: [Int], labels: [String]) {
+        self.bins = bins
+        self.labels = labels
+        super.init(frame: .zero)
+        heightAnchor.constraint(equalToConstant: 120).isActive = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let n = max(bins.count, 1)
+        let barArea = NSRect(
+            x: 0, y: Self.labelHeight,
+            width: bounds.width,
+            height: bounds.height - Self.labelHeight - Self.topPadding)
+        let maxBin = max(bins.max() ?? 0, 1)
+        let barWidth = barArea.width / CGFloat(n)
+
+        NSColor.separatorColor.setFill()
+        NSRect(x: 0, y: barArea.minY - 1, width: bounds.width, height: 1).fill()
+
+        for (i, count) in bins.enumerated() {
+            let x = barArea.minX + CGFloat(i) * barWidth
+            let height = count > 0
+                ? max(4, barArea.height * CGFloat(count) / CGFloat(maxBin)) : 2
+            let bar = NSRect(x: x + 2, y: barArea.minY, width: barWidth - 4, height: height)
+            (count > 0 ? NSColor.controlAccentColor : NSColor.separatorColor).setFill()
+            NSBezierPath(roundedRect: bar, xRadius: 2, yRadius: 2).fill()
+        }
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular),
+            .foregroundColor: NSColor.tertiaryLabelColor,
+        ]
+        // For ≤7 days show every label; for ≤14 every other; otherwise every 7th.
+        let interval = n > 14 ? 7 : (n > 7 ? 2 : 1)
+        for (i, label) in labels.enumerated() {
+            guard i % interval == 0 else { continue }
+            let x = barArea.minX + CGFloat(i) * barWidth
+            let str = NSAttributedString(string: label, attributes: attributes)
+            let strW = str.size().width
+            let drawX = min(x + barWidth / 2 - strW / 2, bounds.width - strW)
+            str.draw(at: NSPoint(x: max(0, drawX), y: 1))
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
     }
 }
 
