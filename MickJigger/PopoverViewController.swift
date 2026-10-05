@@ -74,6 +74,8 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
 
     // Activity tracking quick stats (today: clicks · distance · active time).
     private let activityStatsLabel = NSTextField(labelWithString: "")
+    private let activityButton = NSButton()
+    private let activitySubtitle = NSTextField(labelWithString: "")
 
     private let launchAtLoginSwitch = NSSwitch()
 
@@ -94,21 +96,25 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         root = NSStackView()
         root.orientation = .vertical
         root.alignment = .leading
-        root.spacing = 10
-        root.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
+        root.spacing = 8
+        root.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
         root.translatesAutoresizingMaskIntoConstraints = false
 
         // Permission banner (hidden unless an activation was blocked).
         buildPermissionBanner()
         root.addArrangedSubview(permissionBanner)
 
-        // Header: title + status dot + master toggle.
+        // Header: title + "Jiggling" caption + status dot + master toggle.
         let titleLabel = NSTextField(labelWithString: "Mick Jigger")
         titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        let jigglingCaption = NSTextField(labelWithString: "Jiggling")
+        jigglingCaption.font = .systemFont(ofSize: 11)
+        jigglingCaption.textColor = .secondaryLabelColor
         statusDotLabel.font = .systemFont(ofSize: 11, weight: .medium)
         activeSwitch.target = self
         activeSwitch.action = #selector(activeSwitchChanged)
-        let header = row(titleLabel, spacer(), statusDotLabel, activeSwitch)
+        activeSwitch.controlSize = .small
+        let header = row(titleLabel, spacer(), jigglingCaption, statusDotLabel, activeSwitch)
         root.addArrangedSubview(header)
 
         sublineLabel.font = .systemFont(ofSize: 11)
@@ -118,26 +124,30 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         root.addArrangedSubview(separator())
 
         // Jiggle interval.
-        root.addArrangedSubview(sectionLabel("Jiggle interval"))
         intervalControl.target = self
         intervalControl.action = #selector(intervalChanged)
-        root.addArrangedSubview(intervalControl)
+        intervalControl.controlSize = .small
 
         // Random interval mode: ±30% jitter around the base interval.
         let randomLabel = NSTextField(labelWithString: "Randomize interval (±30%)")
-        randomLabel.font = .systemFont(ofSize: 12)
+        randomLabel.font = .systemFont(ofSize: 11)
+        randomLabel.textColor = .secondaryLabelColor
         randomIntervalSwitch.target = self
         randomIntervalSwitch.action = #selector(randomIntervalChanged)
+        randomIntervalSwitch.controlSize = .small
         let randomRow = row(randomLabel, spacer(), randomIntervalSwitch)
-        root.addArrangedSubview(randomRow)
+
+        let intervalGroup = labeledGroup("Jiggle interval", intervalControl, randomRow, spacing: 6)
+        root.addArrangedSubview(intervalGroup)
 
         root.addArrangedSubview(separator())
 
         // Movement distance.
-        root.addArrangedSubview(sectionLabel("Movement distance"))
         distanceControl.target = self
         distanceControl.action = #selector(distanceChanged)
-        root.addArrangedSubview(distanceControl)
+        distanceControl.controlSize = .small
+        let distanceGroup = labeledGroup("Movement distance", distanceControl, spacing: 6)
+        root.addArrangedSubview(distanceGroup)
 
         root.addArrangedSubview(separator())
 
@@ -148,6 +158,7 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         clickLabel.font = .systemFont(ofSize: 12)
         clickSwitch.target = self
         clickSwitch.action = #selector(clickToggled)
+        clickSwitch.controlSize = .small
         let clickRow = row(clickLabel, spacer(), clickSwitch)
         root.addArrangedSubview(clickRow)
 
@@ -157,6 +168,7 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         clickEveryLabel.textColor = .secondaryLabelColor
         clickIntervalControl.target = self
         clickIntervalControl.action = #selector(clickIntervalChanged)
+        clickIntervalControl.controlSize = .small
         clickIntervalRow.orientation = .vertical
         clickIntervalRow.alignment = .leading
         clickIntervalRow.spacing = 4
@@ -168,6 +180,7 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         scrollLabel.font = .systemFont(ofSize: 12)
         scrollSwitch.target = self
         scrollSwitch.action = #selector(scrollToggled)
+        scrollSwitch.controlSize = .small
         let scrollRow = row(scrollLabel, spacer(), scrollSwitch)
         root.addArrangedSubview(scrollRow)
 
@@ -183,8 +196,8 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         autoStartLabel.font = .systemFont(ofSize: 12)
         autoStartSwitch.target = self
         autoStartSwitch.action = #selector(autoStartSwitchChanged)
+        autoStartSwitch.controlSize = .small
         let autoStartRow = row(autoStartLabel, spacer(), autoStartSwitch)
-        root.addArrangedSubview(autoStartRow)
 
         // "Start after" — fully collapsed (not greyed out) when auto-start is OFF.
         let startAfterLabel = NSTextField(labelWithString: "Start after:")
@@ -192,12 +205,15 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         startAfterLabel.textColor = .secondaryLabelColor
         thresholdControl.target = self
         thresholdControl.action = #selector(thresholdChanged)
+        thresholdControl.controlSize = .small
         thresholdRow.orientation = .vertical
         thresholdRow.alignment = .leading
         thresholdRow.spacing = 4
         thresholdRow.addArrangedSubview(startAfterLabel)
         thresholdRow.addArrangedSubview(thresholdControl)
-        root.addArrangedSubview(thresholdRow)
+
+        let autoStartGroup = labeledGroup(nil, autoStartRow, thresholdRow, spacing: 6)
+        root.addArrangedSubview(autoStartGroup)
 
         root.addArrangedSubview(separator())
 
@@ -222,17 +238,18 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
 
         root.addArrangedSubview(separator())
 
-        // Activity tracking: today's quick stats + window button.
+        // Activity tracking: today's quick stats + window button. The button's
+        // title/action are state-driven (see refresh()): "Open Activity" once
+        // tracking is live, "Enable Tracking" (→ Input Monitoring settings)
+        // until then.
         root.addArrangedSubview(sectionLabel("Activity Tracking"))
         activityStatsLabel.font = .systemFont(ofSize: 11)
         activityStatsLabel.textColor = .secondaryLabelColor
-        let activityButton = NSButton(
-            title: "Activity…", target: self, action: #selector(openActivityWindow))
         activityButton.bezelStyle = .rounded
         activityButton.controlSize = .small
         let activityRow = row(activityStatsLabel, spacer(), activityButton)
         root.addArrangedSubview(activityRow)
-        let activitySubtitle = NSTextField(labelWithString: "Runs independently from jiggling")
+        activitySubtitle.stringValue = "Runs independently from jiggling"
         activitySubtitle.font = .systemFont(ofSize: 11)
         activitySubtitle.textColor = .secondaryLabelColor
         root.addArrangedSubview(activitySubtitle)
@@ -244,19 +261,26 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         launchLabel.font = .systemFont(ofSize: 12)
         launchAtLoginSwitch.target = self
         launchAtLoginSwitch.action = #selector(launchAtLoginToggled)
+        launchAtLoginSwitch.controlSize = .small
         let launchRow = row(launchLabel, spacer(), launchAtLoginSwitch)
         root.addArrangedSubview(launchRow)
 
+        root.addArrangedSubview(separator())
+
         // Quit.
-        let quitButton = NSButton(title: "Quit Mick Jigger", target: self, action: #selector(quit))
-        quitButton.bezelStyle = .inline
-        quitButton.font = .systemFont(ofSize: 12)
+        let quitButton = NSButton(title: "", target: self, action: #selector(quit))
+        quitButton.isBordered = false
+        quitButton.setButtonType(.momentaryChange)
+        quitButton.attributedTitle = NSAttributedString(
+            string: "Quit Mick Jigger",
+            attributes: [.foregroundColor: NSColor.systemRed,
+                         .font: NSFont.systemFont(ofSize: 12)])
         root.addArrangedSubview(quitButton)
 
         // Hotkeys hint.
         let hotkeyHint = NSTextField(labelWithString: "⌥⌘J  Toggle  ·  ⌥⌘M  Auto-start")
         hotkeyHint.font = .systemFont(ofSize: 10)
-        hotkeyHint.textColor = .tertiaryLabelColor
+        hotkeyHint.textColor = .secondaryLabelColor
         hotkeyHint.alignment = .center
         root.addArrangedSubview(hotkeyHint)
 
@@ -270,12 +294,12 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
 
         // Pin widths so the stack lays out at a fixed popover width.
         for item in [permissionBanner, header, sublineLabel,
-                     intervalControl, randomRow, distanceControl, clickRow,
+                     intervalGroup, distanceGroup, clickRow,
                      clickIntervalRow, scrollRow, interactionWarningLabel,
-                     autoStartRow, thresholdRow, marginsHeaderButton, marginsContainer,
+                     autoStartGroup, marginsHeaderButton, marginsContainer,
                      activityRow, launchRow, hotkeyHint, versionFooter] {
             item.widthAnchor.constraint(
-                equalTo: root.widthAnchor, constant: -28).isActive = true
+                equalTo: root.widthAnchor, constant: -24).isActive = true
         }
 
         let container = NSView()
@@ -312,14 +336,14 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         marginsContainer.alignment = .leading
         marginsContainer.spacing = 6
 
+        // True 2×2 grid: each cell is a compact "Label [field] px" mini-stack,
+        // rather than one column per label/field/unit across all four rows.
         let grid = NSGridView(views: [
-            marginRow("Top", marginTopField),
-            marginRow("Bottom", marginBottomField),
-            marginRow("Left", marginLeftField),
-            marginRow("Right", marginRightField),
+            [marginRow("Top", marginTopField), marginRow("Bottom", marginBottomField)],
+            [marginRow("Left", marginLeftField), marginRow("Right", marginRightField)],
         ])
-        grid.rowSpacing = 6
-        grid.columnSpacing = 8
+        grid.rowSpacing = 8
+        grid.columnSpacing = 16
         marginsContainer.addArrangedSubview(grid)
 
         marginsWarningLabel.font = .systemFont(ofSize: 10)
@@ -328,7 +352,7 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         marginsContainer.addArrangedSubview(marginsWarningLabel)
     }
 
-    private func marginRow(_ title: String, _ field: NSTextField) -> [NSView] {
+    private func marginRow(_ title: String, _ field: NSTextField) -> NSStackView {
         let label = NSTextField(labelWithString: title)
         label.font = .systemFont(ofSize: 12)
         let formatter = NumberFormatter()
@@ -341,11 +365,11 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
         field.delegate = self
         field.target = self
         field.action = #selector(marginFieldChanged(_:))
-        field.widthAnchor.constraint(equalToConstant: 60).isActive = true
+        field.widthAnchor.constraint(equalToConstant: 50).isActive = true
         let px = NSTextField(labelWithString: "px")
         px.font = .systemFont(ofSize: 11)
         px.textColor = .secondaryLabelColor
-        return [label, field, px]
+        return row(label, field, px)
     }
 
     // MARK: - Row helpers
@@ -379,8 +403,28 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
     private func separator() -> NSBox {
         let box = NSBox()
         box.boxType = .separator
-        box.widthAnchor.constraint(equalToConstant: Self.contentWidth - 28).isActive = true
+        box.widthAnchor.constraint(equalToConstant: Self.contentWidth - 24).isActive = true
         return box
+    }
+
+    /// Vertically stacks an optional section title with one or more closely
+    /// related controls at tighter spacing than the root stack's, so visually
+    /// coupled rows (e.g. a control and its dependent sub-row) read as one
+    /// group. Each content view's width is pinned to the group's width so it
+    /// still fills the popover once nested.
+    private func labeledGroup(_ title: String?, _ views: NSView..., spacing: CGFloat) -> NSStackView {
+        let group = NSStackView()
+        group.orientation = .vertical
+        group.alignment = .leading
+        group.spacing = spacing
+        if let title {
+            group.addArrangedSubview(sectionLabel(title))
+        }
+        for view in views {
+            group.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: group.widthAnchor).isActive = true
+        }
+        return group
     }
 
     // MARK: - Lifecycle
@@ -420,7 +464,7 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
             let intervalLabel = SettingsStore.sublineLabel(forSeconds: settings.interval)
             switch state {
             case .inactive:
-                sublineLabel.stringValue = "Inactive"
+                sublineLabel.stringValue = "Jiggling is paused"
             case .monitoring:
                 let threshold = SettingsStore.label(forSeconds: settings.autoStartThreshold)
                 sublineLabel.stringValue = "Watching — starts after \(threshold) idle"
@@ -465,8 +509,16 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
                 "\(ActivityService.formatCount(today.clicks)) clicks · "
                 + "\(ActivityService.formatDistance(px: today.distancePx)) · "
                 + "\(ActivityService.formatDuration(today.activeSeconds)) active"
+            activityButton.title = "Open Activity"
+            activityButton.target = self
+            activityButton.action = #selector(openActivityWindow)
+            activitySubtitle.isHidden = false
         } else {
             activityStatsLabel.stringValue = "Tracking off — needs Input Monitoring"
+            activityButton.title = "Enable Tracking"
+            activityButton.target = self
+            activityButton.action = #selector(enableActivityTracking)
+            activitySubtitle.isHidden = true
         }
 
         // Launch at login. SMAppService is the source of truth — the user can
@@ -656,6 +708,10 @@ final class PopoverViewController: NSViewController, NSTextFieldDelegate {
 
     @objc private func openActivityWindow() {
         ActivityService.shared.showActivityWindow()
+    }
+
+    @objc private func enableActivityTracking() {
+        InputMonitoringPermission.openSystemSettings()
     }
 
     @objc private func quit() {
